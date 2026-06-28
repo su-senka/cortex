@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Internal Docs Assistant</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: #f3f4f6;
+      color: #111827;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: #1e40af;
+      color: #fff;
+      padding: 0.875rem 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    header h1 { font-size: 1.125rem; font-weight: 600; }
+    header .ingest-btn {
+      margin-left: auto;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      color: #fff;
+      padding: 0.35rem 0.85rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.8125rem;
+    }
+    header .ingest-btn:hover { background: rgba(255,255,255,0.25); }
+
+    .layout {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Chat pane ── */
+    .chat-pane {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.25rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .message {
+      max-width: 780px;
+      width: 100%;
+    }
+    .message.user { align-self: flex-end; }
+    .message.assistant { align-self: flex-start; }
+
+    .bubble {
+      padding: 0.65rem 0.9rem;
+      border-radius: 10px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .user .bubble {
+      background: #1e40af;
+      color: #fff;
+      border-bottom-right-radius: 3px;
+    }
+    .assistant .bubble {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-bottom-left-radius: 3px;
+    }
+
+    .thinking {
+      color: #6b7280;
+      font-size: 0.85rem;
+      padding: 0.25rem 0;
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    /* ── Input bar ── */
+    .input-bar {
+      padding: 0.875rem 1.5rem;
+      background: #fff;
+      border-top: 1px solid #e5e7eb;
+      display: flex;
+      gap: 0.5rem;
+    }
+    .input-bar textarea {
+      flex: 1;
+      resize: none;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 0.6rem 0.85rem;
+      font-size: 0.9375rem;
+      font-family: inherit;
+      line-height: 1.5;
+      outline: none;
+      max-height: 130px;
+      overflow-y: auto;
+    }
+    .input-bar textarea:focus { border-color: #1e40af; box-shadow: 0 0 0 2px #bfdbfe; }
+    .input-bar button {
+      background: #1e40af;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 0 1.1rem;
+      font-size: 0.9375rem;
+      cursor: pointer;
+      white-space: nowrap;
+      align-self: flex-end;
+      height: 38px;
+    }
+    .input-bar button:hover { background: #1d4ed8; }
+    .input-bar button:disabled { background: #93c5fd; cursor: not-allowed; }
+
+    /* ── Sources sidebar ── */
+    .sources-pane {
+      width: 280px;
+      background: #fff;
+      border-left: 1px solid #e5e7eb;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .sources-pane h2 {
+      font-size: 0.8125rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #6b7280;
+      padding: 0.875rem 1rem 0.5rem;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .sources-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0.5rem 0;
+    }
+    .source-item {
+      padding: 0.55rem 1rem;
+      border-bottom: 1px solid #f3f4f6;
+    }
+    .source-item:last-child { border-bottom: none; }
+    .source-title {
+      font-weight: 600;
+      font-size: 0.875rem;
+      color: #1e40af;
+    }
+    .source-file {
+      font-size: 0.75rem;
+      color: #6b7280;
+      margin-top: 1px;
+      word-break: break-all;
+    }
+    .source-section {
+      font-size: 0.75rem;
+      color: #374151;
+      margin-top: 2px;
+    }
+    .source-score {
+      font-size: 0.7rem;
+      color: #9ca3af;
+      margin-top: 2px;
+    }
+    .sources-empty {
+      color: #9ca3af;
+      font-size: 0.85rem;
+      padding: 1rem;
+      text-align: center;
+    }
+
+    /* ── Responsive: hide sidebar on narrow screens ── */
+    @media (max-width: 640px) {
+      .sources-pane { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Internal Docs Assistant</h1>
+  <button class="ingest-btn" id="ingestBtn" title="Rescan the docs folder and update the index">
+    ↺ Re-index docs
+  </button>
+</header>
+
+<div class="layout">
+  <div class="chat-pane">
+    <div class="messages" id="messages">
+      <div class="message assistant">
+        <div class="bubble">Hello! Ask me anything about the internal documentation.</div>
+      </div>
+    </div>
+
+    <div class="input-bar">
+      <textarea
+        id="questionInput"
+        rows="1"
+        placeholder="Ask a question about the docs…"
+        autofocus
+      ></textarea>
+      <button id="sendBtn">Send</button>
+    </div>
+  </div>
+
+  <div class="sources-pane">
+    <h2>Sources</h2>
+    <div class="sources-list" id="sourcesList">
+      <p class="sources-empty">Sources from the last answer will appear here.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+  const messagesEl = document.getElementById('messages');
+  const questionInput = document.getElementById('questionInput');
+  const sendBtn = document.getElementById('sendBtn');
+  const sourcesList = document.getElementById('sourcesList');
+  const ingestBtn = document.getElementById('ingestBtn');
+
+  let busy = false;
+
+  // Auto-grow textarea.
+  questionInput.addEventListener('input', () => {
+    questionInput.style.height = 'auto';
+    questionInput.style.height = Math.min(questionInput.scrollHeight, 130) + 'px';
+  });
+
+  // Send on Enter (Shift+Enter inserts newline).
+  questionInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (!busy) sendQuestion();
+    }
+  });
+
+  sendBtn.addEventListener('click', () => { if (!busy) sendQuestion(); });
+
+  ingestBtn.addEventListener('click', async () => {
+    ingestBtn.disabled = true;
+    ingestBtn.textContent = 'Indexing…';
+    try {
+      const r = await fetch('/api/ingest', { method: 'POST' });
+      const body = await r.json();
+      ingestBtn.textContent = '✓ Done';
+      setTimeout(() => { ingestBtn.textContent = '↺ Re-index docs'; ingestBtn.disabled = false; }, 2000);
+    } catch (err) {
+      ingestBtn.textContent = '✗ Error';
+      setTimeout(() => { ingestBtn.textContent = '↺ Re-index docs'; ingestBtn.disabled = false; }, 2000);
+    }
+  });
+
+  async function sendQuestion() {
+    const question = questionInput.value.trim();
+    if (!question) return;
+
+    busy = true;
+    sendBtn.disabled = true;
+    questionInput.value = '';
+    questionInput.style.height = 'auto';
+
+    // Clear sources panel for this new question.
+    sourcesList.innerHTML = '<p class="sources-empty">Retrieving sources…</p>';
+
+    appendMessage('user', question);
+    const assistantBubble = appendMessage('assistant', '');
+    const thinking = document.createElement('div');
+    thinking.className = 'thinking';
+    thinking.textContent = 'Thinking…';
+    assistantBubble.appendChild(thinking);
+
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question }),
+      });
+
+      if (!response.ok || !response.body) {
+        thinking.remove();
+        assistantBubble.textContent = `Error: ${response.statusText}`;
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let answerText = '';
+      let thinkingRemoved = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // SSE events are separated by \n\n; split and process complete events.
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() ?? '';
+
+        for (const part of parts) {
+          if (!part.startsWith('data: ')) continue;
+          const raw = part.slice(6).trim();
+          if (raw === '[DONE]') break;
+
+          let msg;
+          try { msg = JSON.parse(raw); } catch { continue; }
+
+          if (msg.t === 'sources') {
+            renderSources(msg.v);
+          } else if (msg.t === 'text') {
+            if (!thinkingRemoved) {
+              thinking.remove();
+              thinkingRemoved = true;
+            }
+            answerText += msg.v;
+            assistantBubble.textContent = answerText;
+            scrollToBottom();
+          } else if (msg.t === 'error') {
+            if (!thinkingRemoved) { thinking.remove(); thinkingRemoved = true; }
+            assistantBubble.textContent = `Error: ${msg.v}`;
+          }
+        }
+      }
+    } catch (err) {
+      thinking.remove();
+      assistantBubble.textContent = `Error: ${err.message}`;
+    } finally {
+      busy = false;
+      sendBtn.disabled = false;
+      questionInput.focus();
+    }
+  }
+
+  function appendMessage(role, text) {
+    const msgEl = document.createElement('div');
+    msgEl.className = `message ${role}`;
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.textContent = text;
+    msgEl.appendChild(bubble);
+    messagesEl.appendChild(msgEl);
+    scrollToBottom();
+    return bubble;
+  }
+
+  function scrollToBottom() {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function renderSources(sources) {
+    if (!sources || sources.length === 0) {
+      sourcesList.innerHTML = '<p class="sources-empty">No matching documents found.</p>';
+      return;
+    }
+    sourcesList.innerHTML = '';
+    for (const s of sources) {
+      const item = document.createElement('div');
+      item.className = 'source-item';
+      item.innerHTML = `
+        <div class="source-title">${escHtml(s.title || s.sourceFile)}</div>
+        <div class="source-file">${escHtml(s.sourceFile)}</div>
+        ${s.sectionHeading ? `<div class="source-section">§ ${escHtml(s.sectionHeading)}</div>` : ''}
+        <div class="source-score">Score: ${(s.score * 100).toFixed(1)}%</div>
+      `;
+      sourcesList.appendChild(item);
+    }
+  }
+
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+</script>
+</body>
+</html>
