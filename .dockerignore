@@ -1,0 +1,20 @@
+src/**/bin/
+src/**/obj/
+
+# Windows publish artifacts
+publish/
+publish-win-x64/
+
+# Runtime data goes in Docker volumes, not baked into the image
+src/RagAssistant.Web/rag_store.db
+src/RagAssistant.Web/rag_metadata.json
+
+# Docs and samples are mounted as a volume at runtime
+docs/
+sample-docs/
+
+# IDE + OS
+.vs/
+.vscode/
+**/.DS_Store
+*.user

@@ -16,6 +16,10 @@ public sealed class RagQueryService
     private const string SystemPrompt =
         "You are a helpful assistant for internal documentation. " +
         "Answer the user's question based ONLY on the provided document excerpts. " +
+        "Each excerpt is prefixed with its number, e.g. [1] or [2]. " +
+        "After each sentence that draws on a numbered source, append the citation marker [^N] " +
+        "where N is the source number — for example: 'Split tunneling must be disabled. [^1]' " +
+        "Only cite sources you actually used. " +
         "If the answer is not found in the documents, say so explicitly — " +
         "do not use knowledge outside the provided context.";
 
@@ -49,11 +53,13 @@ public sealed class RagQueryService
 
         // Step 3: build source list from search results — deterministic, not derived from LLM output.
         var sources = hits
-            .Select(h => new SourceReference(
+            .Select((h, i) => new SourceReference(
+                i + 1,
                 h.Record.SourceFile,
                 h.Record.Title,
                 h.Record.SectionHeading,
-                h.Score ?? 0))
+                h.Score ?? 0,
+                h.Record.Content))
             .ToList();
 
         // Step 4: compose the prompt and return a lazy stream for the LLM response.
@@ -85,11 +91,11 @@ public sealed class RagQueryService
     {
         var context = hits.Count == 0
             ? "(No relevant documentation found.)"
-            : string.Join("\n\n---\n\n", hits.Select(h =>
-                $"Source: {h.Record.Title} — {h.Record.SourceFile}" +
+            : string.Join("\n\n---\n\n", hits.Select((h, i) =>
+                $"[{i + 1}] {h.Record.Title}" +
                 (string.IsNullOrEmpty(h.Record.SectionHeading)
                     ? string.Empty
-                    : $" [{h.Record.SectionHeading}]") +
+                    : $" > {h.Record.SectionHeading}") +
                 $"\n\n{h.Record.Content}"));
 
         var userContent =

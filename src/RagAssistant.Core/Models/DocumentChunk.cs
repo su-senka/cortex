@@ -35,6 +35,6 @@ public sealed class DocumentChunk
 
     // nomic-embed-text produces 768-dimensional vectors; update Dimensions if you
     // switch embedding models (model and dimension must always agree).
-    [VectorStoreVector(768, DistanceFunction = DistanceFunction.CosineSimilarity)]
+    [VectorStoreVector(768, DistanceFunction = DistanceFunction.CosineDistance)]
     public ReadOnlyMemory<float> Embedding { get; set; }
 }

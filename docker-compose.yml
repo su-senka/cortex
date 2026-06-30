@@ -1,0 +1,44 @@
+name: cortex
+
+services:
+
+  app:
+    build: .
+    image: cortex-rag:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./docs:/docs:ro   # bind-mount your docs folder (read-only — app never writes here)
+      - rag-data:/data    # SQLite DB + metadata survive container replacement
+    environment:
+      Ollama__BaseUrl: http://ollama:11434
+      Rag__VectorDbPath: /data/rag_store.db
+      Rag__DocsFolder: /docs
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-models:/root/.ollama   # models live here; see scripts/pull-models.sh
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+    # CPU-only by default. To use a GPU add:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+volumes:
+  rag-data:
+  ollama-models:

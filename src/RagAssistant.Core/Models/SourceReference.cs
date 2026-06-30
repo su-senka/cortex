@@ -5,7 +5,9 @@ namespace RagAssistant.Core.Models;
 /// Populated from vector search — not from the model output — so citations are exact.
 /// </summary>
 public sealed record SourceReference(
+    int SourceIndex,
     string SourceFile,
     string Title,
     string SectionHeading,
-    double Score);
+    double Score,
+    string ChunkText);

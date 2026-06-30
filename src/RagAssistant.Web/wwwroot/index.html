@@ -85,6 +85,18 @@
       border-bottom-left-radius: 3px;
     }
 
+    /* Inline citation superscripts rendered in the final answer */
+    .bubble .cite-ref {
+      color: #1e40af;
+      text-decoration: none;
+      font-size: 0.72em;
+      font-weight: 700;
+      vertical-align: super;
+      line-height: 0;
+      margin-left: 1px;
+    }
+    .bubble .cite-ref:hover { text-decoration: underline; }
+
     .thinking {
       color: #6b7280;
       font-size: 0.85rem;
@@ -156,12 +168,31 @@
     .source-item {
       padding: 0.55rem 1rem;
       border-bottom: 1px solid #f3f4f6;
+      cursor: pointer;
+      transition: background 0.1s;
     }
     .source-item:last-child { border-bottom: none; }
+    .source-item:hover { background: #f9fafb; }
+    .source-item.cited { background: #eff6ff; }
+    .source-item.cited:hover { background: #dbeafe; }
     .source-title {
       font-weight: 600;
       font-size: 0.875rem;
       color: #1e40af;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      flex-wrap: wrap;
+    }
+    .cite-badge {
+      display: inline-block;
+      background: #1e40af;
+      color: #fff;
+      font-size: 0.6rem;
+      font-weight: 700;
+      padding: 1px 5px;
+      border-radius: 4px;
+      letter-spacing: 0.04em;
     }
     .source-file {
       font-size: 0.75rem;
@@ -179,11 +210,99 @@
       color: #9ca3af;
       margin-top: 2px;
     }
+    .source-hint {
+      font-size: 0.68rem;
+      color: #9ca3af;
+      margin-top: 3px;
+    }
     .sources-empty {
       color: #9ca3af;
       font-size: 0.85rem;
       padding: 1rem;
       text-align: center;
+    }
+
+    /* ── Chunk viewer modal ── */
+    .chunk-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .chunk-modal.hidden { display: none; }
+    .chunk-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+    }
+    .chunk-modal-dialog {
+      position: relative;
+      background: #fff;
+      border-radius: 10px;
+      width: min(700px, 92vw);
+      max-height: 82vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.28);
+    }
+    .chunk-modal-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      padding: 1rem 1.25rem 0.75rem;
+      border-bottom: 1px solid #e5e7eb;
+      gap: 0.75rem;
+    }
+    .chunk-modal-titles { flex: 1; min-width: 0; }
+    .chunk-modal-title {
+      font-weight: 600;
+      font-size: 0.9375rem;
+      color: #111827;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .chunk-modal-subtitle {
+      font-size: 0.8rem;
+      color: #6b7280;
+      margin-top: 2px;
+    }
+    .chunk-modal-close {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 1.1rem;
+      color: #9ca3af;
+      line-height: 1;
+      padding: 0.1rem 0.25rem;
+      flex-shrink: 0;
+    }
+    .chunk-modal-close:hover { color: #111827; }
+    .chunk-modal-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem 1.25rem;
+    }
+    .chunk-modal-text {
+      white-space: pre-wrap;
+      font-family: inherit;
+      font-size: 0.875rem;
+      line-height: 1.7;
+      color: #374151;
+    }
+    .chunk-modal-text mark {
+      background: #fef08a;
+      color: inherit;
+      border-radius: 2px;
+      padding: 0 1px;
+    }
+    .chunk-modal-hint {
+      font-size: 0.75rem;
+      color: #9ca3af;
+      padding: 0.5rem 1.25rem 0.75rem;
+      border-top: 1px solid #f3f4f6;
     }
 
     /* ── Responsive: hide sidebar on narrow screens ── */
@@ -228,22 +347,51 @@
   </div>
 </div>
 
+<!-- Chunk viewer modal -->
+<div id="chunkModal" class="chunk-modal hidden">
+  <div class="chunk-modal-backdrop" id="modalBackdrop"></div>
+  <div class="chunk-modal-dialog">
+    <div class="chunk-modal-header">
+      <div class="chunk-modal-titles">
+        <div class="chunk-modal-title" id="modalTitle"></div>
+        <div class="chunk-modal-subtitle" id="modalSubtitle"></div>
+      </div>
+      <button class="chunk-modal-close" id="modalClose" title="Close">✕</button>
+    </div>
+    <div class="chunk-modal-body">
+      <pre class="chunk-modal-text" id="modalText"></pre>
+    </div>
+    <div class="chunk-modal-hint" id="modalHint"></div>
+  </div>
+</div>
+
 <script>
-  const messagesEl = document.getElementById('messages');
+  const messagesEl    = document.getElementById('messages');
   const questionInput = document.getElementById('questionInput');
-  const sendBtn = document.getElementById('sendBtn');
-  const sourcesList = document.getElementById('sourcesList');
-  const ingestBtn = document.getElementById('ingestBtn');
+  const sendBtn       = document.getElementById('sendBtn');
+  const sourcesList   = document.getElementById('sourcesList');
+  const ingestBtn     = document.getElementById('ingestBtn');
+  const chunkModal    = document.getElementById('chunkModal');
+  const modalBackdrop = document.getElementById('modalBackdrop');
+  const modalClose    = document.getElementById('modalClose');
+  const modalTitle    = document.getElementById('modalTitle');
+  const modalSubtitle = document.getElementById('modalSubtitle');
+  const modalText     = document.getElementById('modalText');
+  const modalHint     = document.getElementById('modalHint');
 
   let busy = false;
 
-  // Auto-grow textarea.
+  // Per-answer state — reset at the start of each query.
+  let currentSources   = [];   // SourceReference[] from SSE sources event
+  let currentCitations = {};   // { sourceIndex: [citingSentence, ...] }
+
+  // ── Auto-grow textarea ───────────────────────────────────────────────────────
+
   questionInput.addEventListener('input', () => {
     questionInput.style.height = 'auto';
     questionInput.style.height = Math.min(questionInput.scrollHeight, 130) + 'px';
   });
 
-  // Send on Enter (Shift+Enter inserts newline).
   questionInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -253,19 +401,21 @@
 
   sendBtn.addEventListener('click', () => { if (!busy) sendQuestion(); });
 
+  // ── Re-index ─────────────────────────────────────────────────────────────────
+
   ingestBtn.addEventListener('click', async () => {
     ingestBtn.disabled = true;
     ingestBtn.textContent = 'Indexing…';
     try {
-      const r = await fetch('/api/ingest', { method: 'POST' });
-      const body = await r.json();
+      await fetch('/api/ingest', { method: 'POST' });
       ingestBtn.textContent = '✓ Done';
-      setTimeout(() => { ingestBtn.textContent = '↺ Re-index docs'; ingestBtn.disabled = false; }, 2000);
-    } catch (err) {
+    } catch {
       ingestBtn.textContent = '✗ Error';
-      setTimeout(() => { ingestBtn.textContent = '↺ Re-index docs'; ingestBtn.disabled = false; }, 2000);
     }
+    setTimeout(() => { ingestBtn.textContent = '↺ Re-index docs'; ingestBtn.disabled = false; }, 2000);
   });
+
+  // ── Send question ─────────────────────────────────────────────────────────────
 
   async function sendQuestion() {
     const question = questionInput.value.trim();
@@ -276,7 +426,10 @@
     questionInput.value = '';
     questionInput.style.height = 'auto';
 
-    // Clear sources panel for this new question.
+    // Reset per-answer state.
+    currentSources   = [];
+    currentCitations = {};
+
     sourcesList.innerHTML = '<p class="sources-empty">Retrieving sources…</p>';
 
     appendMessage('user', question);
@@ -299,19 +452,17 @@
         return;
       }
 
-      const reader = response.body.getReader();
+      const reader  = response.body.getReader();
       const decoder = new TextDecoder();
-      let buffer = '';
-      let answerText = '';
-      let thinkingRemoved = false;
+      let buffer           = '';
+      let answerText       = '';
+      let thinkingRemoved  = false;
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-
-        // SSE events are separated by \n\n; split and process complete events.
         const parts = buffer.split('\n\n');
         buffer = parts.pop() ?? '';
 
@@ -324,13 +475,12 @@
           try { msg = JSON.parse(raw); } catch { continue; }
 
           if (msg.t === 'sources') {
-            renderSources(msg.v);
+            currentSources = msg.v ?? [];
+            renderSources(currentSources);
           } else if (msg.t === 'text') {
-            if (!thinkingRemoved) {
-              thinking.remove();
-              thinkingRemoved = true;
-            }
+            if (!thinkingRemoved) { thinking.remove(); thinkingRemoved = true; }
             answerText += msg.v;
+            // During streaming show raw text (including [^N] markers as-is).
             assistantBubble.textContent = answerText;
             scrollToBottom();
           } else if (msg.t === 'error') {
@@ -339,6 +489,14 @@
           }
         }
       }
+
+      // Once streaming is complete, parse citations and polish the answer bubble.
+      if (answerText) {
+        currentCitations = extractCitations(answerText);
+        finalizeAnswerBubble(assistantBubble, answerText);
+        markCitedSources(currentCitations);
+      }
+
     } catch (err) {
       thinking.remove();
       assistantBubble.textContent = `Error: ${err.message}`;
@@ -349,8 +507,169 @@
     }
   }
 
+  // ── Citation parsing ──────────────────────────────────────────────────────────
+
+  /**
+   * Scans the completed answer text for [^N] markers and collects the
+   * preceding sentence for each cited source index.
+   * Returns { sourceIndex: [sentence, ...] }.
+   */
+  function extractCitations(text) {
+    const citations = {};
+    // Match the sentence (up to prior sentence boundary or line break) before each [^N].
+    const re = /([^\n.!?]*[.!?]?)\s*\[\^(\d+)\]/g;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const sentence = m[1].trim();
+      const idx      = parseInt(m[2], 10);
+      if (!citations[idx]) citations[idx] = [];
+      if (sentence) citations[idx].push(sentence);
+    }
+    return citations;
+  }
+
+  /**
+   * Replaces [^N] markers in the completed answer with superscript links
+   * that open the corresponding source in the chunk viewer.
+   */
+  function finalizeAnswerBubble(bubble, answerText) {
+    // Escape HTML, then inject <sup> cite links.
+    const html = escHtml(answerText).replace(/\[\^(\d+)\]/g, (_, n) =>
+      `<sup><a class="cite-ref" href="#" data-src="${n}">[${n}]</a></sup>`
+    );
+    bubble.innerHTML = html;
+
+    // Clicking a cite link opens the chunk modal for that source.
+    bubble.querySelectorAll('.cite-ref').forEach(a => {
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        const idx = parseInt(a.dataset.src, 10);
+        const src = currentSources.find(s => s.sourceIndex === idx);
+        if (src) openModal(src);
+      });
+    });
+  }
+
+  // ── Source sidebar ────────────────────────────────────────────────────────────
+
+  function renderSources(sources) {
+    if (!sources || sources.length === 0) {
+      sourcesList.innerHTML = '<p class="sources-empty">No matching documents found.</p>';
+      return;
+    }
+    sourcesList.innerHTML = '';
+    for (const s of sources) {
+      const item = document.createElement('div');
+      item.className = 'source-item';
+      item.dataset.sourceIndex = s.sourceIndex;
+      item.innerHTML = `
+        <div class="source-title">[${s.sourceIndex}] ${escHtml(s.title || s.sourceFile)}</div>
+        <div class="source-file">${escHtml(s.sourceFile)}</div>
+        ${s.sectionHeading ? `<div class="source-section">§ ${escHtml(s.sectionHeading)}</div>` : ''}
+        <div class="source-score">Score: ${(s.score * 100).toFixed(1)}%</div>
+        <div class="source-hint">Click to view passage</div>
+      `;
+      item.addEventListener('click', () => openModal(s));
+      sourcesList.appendChild(item);
+    }
+  }
+
+  /** Adds "CITED" badges to source cards that were actually referenced by the LLM. */
+  function markCitedSources(citations) {
+    for (const [idxStr] of Object.entries(citations)) {
+      const idx  = parseInt(idxStr, 10);
+      const item = sourcesList.querySelector(`[data-source-index="${idx}"]`);
+      if (!item) continue;
+      item.classList.add('cited');
+      const titleEl = item.querySelector('.source-title');
+      if (titleEl && !titleEl.querySelector('.cite-badge')) {
+        titleEl.insertAdjacentHTML('beforeend', '<span class="cite-badge">CITED</span>');
+      }
+    }
+  }
+
+  // ── Chunk viewer modal ────────────────────────────────────────────────────────
+
+  function openModal(source) {
+    modalTitle.textContent    = source.title || source.sourceFile;
+    modalSubtitle.textContent = [
+      source.sourceFile,
+      source.sectionHeading ? `§ ${source.sectionHeading}` : null,
+    ].filter(Boolean).join('  ·  ');
+
+    const citingSentences = currentCitations[source.sourceIndex] ?? [];
+    const highlighted     = applyKeywordHighlights(source.chunkText ?? '', citingSentences);
+
+    if (highlighted !== null) {
+      // innerHTML safe — applyKeywordHighlights returns escaped HTML with <mark> only.
+      modalText.innerHTML = highlighted;
+      modalHint.textContent = citingSentences.length > 0
+        ? 'Highlighted words were extracted from the answer that cited this source.'
+        : '';
+    } else {
+      modalText.textContent = source.chunkText ?? '';
+      modalHint.textContent = '';
+    }
+
+    chunkModal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeModal() {
+    chunkModal.classList.add('hidden');
+    document.body.style.overflow = '';
+  }
+
+  modalClose.addEventListener('click', closeModal);
+  modalBackdrop.addEventListener('click', closeModal);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeModal();
+  });
+
+  // ── Keyword highlighting ──────────────────────────────────────────────────────
+
+  const STOP_WORDS = new Set([
+    'about','after','again','also','another','because','before','between','both',
+    'could','does','done','each','every','from','have','here','into','just',
+    'like','made','make','many','more','most','much','must','need','never',
+    'only','other','over','same','should','some','such','than','that','their',
+    'them','then','there','these','they','this','those','through','time',
+    'under','very','want','well','were','what','when','where','which','while',
+    'will','with','would','your',
+  ]);
+
+  /**
+   * Escapes `rawText` as HTML, then wraps significant keywords extracted from
+   * `citingSentences` in <mark> tags.  Returns null if there is nothing to
+   * highlight (so the caller can fall back to textContent assignment).
+   */
+  function applyKeywordHighlights(rawText, citingSentences) {
+    const keywords = [...new Set(
+      citingSentences
+        .flatMap(s => s.split(/\s+/))
+        .map(w => w.replace(/[^\w]/g, '').toLowerCase())
+        .filter(w => w.length >= 5 && !STOP_WORDS.has(w))
+    )];
+
+    const escaped = escHtml(rawText);
+    if (keywords.length === 0) return escaped;
+
+    // Longest keywords first so they aren't broken by shorter substrings.
+    keywords.sort((a, b) => b.length - a.length);
+
+    let html = escaped;
+    for (const kw of keywords) {
+      // \b word boundary — escapeRegex so no injection via keyword text.
+      const re = new RegExp(`\\b(${escRegex(kw)})\\b`, 'gi');
+      html = html.replace(re, '<mark>$1</mark>');
+    }
+    return html;
+  }
+
+  // ── Utilities ─────────────────────────────────────────────────────────────────
+
   function appendMessage(role, text) {
-    const msgEl = document.createElement('div');
+    const msgEl  = document.createElement('div');
     msgEl.className = `message ${role}`;
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
@@ -365,31 +684,16 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
-  function renderSources(sources) {
-    if (!sources || sources.length === 0) {
-      sourcesList.innerHTML = '<p class="sources-empty">No matching documents found.</p>';
-      return;
-    }
-    sourcesList.innerHTML = '';
-    for (const s of sources) {
-      const item = document.createElement('div');
-      item.className = 'source-item';
-      item.innerHTML = `
-        <div class="source-title">${escHtml(s.title || s.sourceFile)}</div>
-        <div class="source-file">${escHtml(s.sourceFile)}</div>
-        ${s.sectionHeading ? `<div class="source-section">§ ${escHtml(s.sectionHeading)}</div>` : ''}
-        <div class="source-score">Score: ${(s.score * 100).toFixed(1)}%</div>
-      `;
-      sourcesList.appendChild(item);
-    }
-  }
-
   function escHtml(str) {
     return String(str)
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  }
+
+  function escRegex(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 </script>
 </body>
