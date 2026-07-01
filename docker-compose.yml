@@ -12,13 +12,14 @@ services:
       - ado-cache:/docs/ado-sync  # named volume for ADO-synced files
       - rag-data:/data            # SQLite DB + metadata survive container replacement
     environment:
+      ASPNETCORE_ENVIRONMENT: Development
       Ollama__BaseUrl: http://ollama:11434
       Rag__VectorDbPath: /data/rag_store.db
       Rag__DocsFolder: /docs
-      # Keycloak OIDC — set Authority to https://keycloak.example.com/realms/your-realm
-      Oidc__Authority: ""
-      Oidc__ClientId: ""
-      Oidc__ClientSecret: ""
+      Oidc__Authority: http://keycloak:8080/realms/cortex
+      Oidc__PublicOrigin: http://localhost:8180
+      Oidc__ClientId: cortex-app
+      Oidc__ClientSecret: cortex-secret
       # Azure DevOps ingestion — leave BaseUrl empty to disable
       AzureDevOps__BaseUrl: ""
       AzureDevOps__Project: ""
@@ -30,6 +31,28 @@ services:
     depends_on:
       ollama:
         condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.2
+    command: start-dev --import-realm
+    ports:
+      - "8180:8080"
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 40s
     restart: unless-stopped
 
   ollama:
@@ -56,3 +79,4 @@ volumes:
   rag-data:
   ado-cache:
   ollama-models:
+  keycloak-data:

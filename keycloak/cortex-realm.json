@@ -1,0 +1,43 @@
+{
+  "realm": "cortex",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "clients": [
+    {
+      "clientId": "cortex-app",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "cortex-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://localhost:8080/signin-oidc",
+        "http://localhost:8080/*"
+      ],
+      "webOrigins": [
+        "http://localhost:8080"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:8080/*"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "dev",
+      "enabled": true,
+      "email": "dev@local",
+      "firstName": "Dev",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

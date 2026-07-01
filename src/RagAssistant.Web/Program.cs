@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Microsoft.AspNetCore.DataProtection;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
@@ -58,15 +59,33 @@ builder.Services
     })
     .AddOpenIdConnect(o =>
     {
-        o.Authority    = oidcCfg["Authority"];   // e.g. https://keycloak.example.com/realms/myrealm
+        // Authority is the internal Keycloak URL — used for discovery doc fetch and token validation.
+        // PublicOrigin (optional) is the browser-facing origin when it differs from Authority,
+        // e.g. in Docker the app reaches Keycloak as keycloak:8080 but the browser needs localhost:8180.
+        // We rewrite only the browser redirect URL on the fly; everything server-to-server stays internal.
+        o.Authority    = oidcCfg["Authority"];
         o.ClientId     = oidcCfg["ClientId"];
         o.ClientSecret = oidcCfg["ClientSecret"];
         o.ResponseType = "code";
         o.SaveTokens   = true;
-        o.GetClaimsFromUserInfoEndpoint = true;
+        o.GetClaimsFromUserInfoEndpoint = false;
+        o.RequireHttpsMetadata = false;
         o.Scope.Add("openid");
         o.Scope.Add("profile");
-        // API calls should get 401, not be redirected to Keycloak.
+
+        o.CorrelationCookie.SameSite    = SameSiteMode.Lax;
+        o.CorrelationCookie.SecurePolicy = CookieSecurePolicy.None;
+        o.NonceCookie.SameSite          = SameSiteMode.Lax;
+        o.NonceCookie.SecurePolicy      = CookieSecurePolicy.None;
+
+        o.TokenValidationParameters.ValidateIssuer   = false;
+        o.TokenValidationParameters.ValidateAudience = false;
+
+        var publicOrigin  = oidcCfg["PublicOrigin"]?.TrimEnd('/');
+        var privateOrigin = string.IsNullOrEmpty(publicOrigin)
+            ? null
+            : new Uri(o.Authority!).GetLeftPart(UriPartial.Authority).TrimEnd('/');
+
         o.Events = new OpenIdConnectEvents
         {
             OnRedirectToIdentityProvider = ctx =>
@@ -76,12 +95,32 @@ builder.Services
                     ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
                     ctx.HandleResponse();
                 }
+                else if (privateOrigin != null)
+                {
+                    ctx.ProtocolMessage.IssuerAddress =
+                        ctx.ProtocolMessage.IssuerAddress.Replace(privateOrigin, publicOrigin);
+                }
                 return Task.CompletedTask;
-            }
+            },
+            OnRedirectToIdentityProviderForSignOut = ctx =>
+            {
+                if (privateOrigin != null)
+                    ctx.ProtocolMessage.IssuerAddress =
+                        ctx.ProtocolMessage.IssuerAddress.Replace(privateOrigin, publicOrigin);
+                return Task.CompletedTask;
+            },
         };
     });
 
 builder.Services.AddAuthorization();
+
+// Persist Data Protection keys to the same directory as the vector DB so they survive
+// container restarts. Without this, correlation cookies from in-flight OIDC flows become
+// unreadable after a restart, causing "Correlation failed" login errors.
+var dpKeysPath = Path.Combine(Path.GetDirectoryName(vectorDbPath)!, "dp-keys");
+Directory.CreateDirectory(dpKeysPath);
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(dpKeysPath));
 
 // ── AI clients ────────────────────────────────────────────────────────────────
 
