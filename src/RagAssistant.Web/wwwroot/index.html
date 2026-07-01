@@ -16,31 +16,115 @@
       flex-direction: column;
     }
 
+    /* ── Header ── */
     header {
       background: #1e40af;
       color: #fff;
-      padding: 0.875rem 1.5rem;
+      padding: 0 1.25rem;
+      height: 52px;
       display: flex;
       align-items: center;
-      gap: 1rem;
+      gap: 0.75rem;
+      flex-shrink: 0;
     }
-    header h1 { font-size: 1.125rem; font-weight: 600; }
-    header .ingest-btn {
-      margin-left: auto;
+    header h1 { font-size: 1.0625rem; font-weight: 600; }
+    .header-spacer { flex: 1; }
+    .header-btn {
       background: rgba(255,255,255,0.15);
       border: 1px solid rgba(255,255,255,0.3);
       color: #fff;
-      padding: 0.35rem 0.85rem;
+      padding: 0.3rem 0.75rem;
       border-radius: 6px;
       cursor: pointer;
-      font-size: 0.8125rem;
+      font-size: 0.8rem;
+      white-space: nowrap;
     }
-    header .ingest-btn:hover { background: rgba(255,255,255,0.25); }
+    .header-btn:hover { background: rgba(255,255,255,0.25); }
+    .user-chip {
+      font-size: 0.8rem;
+      opacity: 0.85;
+      white-space: nowrap;
+    }
 
+    /* ── Three-column layout ── */
     .layout {
       display: flex;
       flex: 1;
       overflow: hidden;
+    }
+
+    /* ── History pane (left) ── */
+    .history-pane {
+      width: 240px;
+      background: #1e293b;
+      color: #e2e8f0;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+    .history-pane-header {
+      padding: 0.75rem 0.875rem 0.5rem;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .new-chat-btn {
+      width: 100%;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.12);
+      color: #e2e8f0;
+      border-radius: 6px;
+      padding: 0.5rem 0.75rem;
+      cursor: pointer;
+      font-size: 0.875rem;
+      text-align: left;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .new-chat-btn:hover { background: rgba(255,255,255,0.14); }
+    .conv-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0.375rem 0;
+    }
+    .conv-item {
+      padding: 0.55rem 0.875rem;
+      cursor: pointer;
+      border-radius: 6px;
+      margin: 0.125rem 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
+      min-width: 0;
+    }
+    .conv-item:hover { background: rgba(255,255,255,0.07); }
+    .conv-item.active { background: rgba(255,255,255,0.12); }
+    .conv-title {
+      flex: 1;
+      font-size: 0.8125rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #cbd5e1;
+    }
+    .conv-item.active .conv-title { color: #f1f5f9; }
+    .conv-delete {
+      opacity: 0;
+      background: none;
+      border: none;
+      color: #94a3b8;
+      cursor: pointer;
+      font-size: 0.75rem;
+      padding: 0.1rem 0.2rem;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+    .conv-item:hover .conv-delete { opacity: 1; }
+    .conv-delete:hover { color: #f87171; background: rgba(255,255,255,0.08); }
+    .conv-list-empty {
+      font-size: 0.775rem;
+      color: #64748b;
+      padding: 0.75rem 1rem;
     }
 
     /* ── Chat pane ── */
@@ -60,11 +144,8 @@
       gap: 1rem;
     }
 
-    .message {
-      max-width: 780px;
-      width: 100%;
-    }
-    .message.user { align-self: flex-end; }
+    .message { max-width: 780px; width: 100%; }
+    .message.user      { align-self: flex-end; }
     .message.assistant { align-self: flex-start; }
 
     .bubble {
@@ -84,8 +165,6 @@
       border: 1px solid #e5e7eb;
       border-bottom-left-radius: 3px;
     }
-
-    /* Inline citation superscripts rendered in the final answer */
     .bubble .cite-ref {
       color: #1e40af;
       text-decoration: none;
@@ -142,7 +221,7 @@
     .input-bar button:hover { background: #1d4ed8; }
     .input-bar button:disabled { background: #93c5fd; cursor: not-allowed; }
 
-    /* ── Sources sidebar ── */
+    /* ── Sources pane (right) ── */
     .sources-pane {
       width: 280px;
       background: #fff;
@@ -194,49 +273,16 @@
       border-radius: 4px;
       letter-spacing: 0.04em;
     }
-    .source-file {
-      font-size: 0.75rem;
-      color: #6b7280;
-      margin-top: 1px;
-      word-break: break-all;
-    }
-    .source-section {
-      font-size: 0.75rem;
-      color: #374151;
-      margin-top: 2px;
-    }
-    .source-score {
-      font-size: 0.7rem;
-      color: #9ca3af;
-      margin-top: 2px;
-    }
-    .source-hint {
-      font-size: 0.68rem;
-      color: #9ca3af;
-      margin-top: 3px;
-    }
-    .sources-empty {
-      color: #9ca3af;
-      font-size: 0.85rem;
-      padding: 1rem;
-      text-align: center;
-    }
+    .source-file    { font-size: 0.75rem; color: #6b7280; margin-top: 1px; word-break: break-all; }
+    .source-section { font-size: 0.75rem; color: #374151; margin-top: 2px; }
+    .source-score   { font-size: 0.7rem; color: #9ca3af; margin-top: 2px; }
+    .source-hint    { font-size: 0.68rem; color: #9ca3af; margin-top: 3px; }
+    .sources-empty  { color: #9ca3af; font-size: 0.85rem; padding: 1rem; text-align: center; }
 
     /* ── Chunk viewer modal ── */
-    .chunk-modal {
-      position: fixed;
-      inset: 0;
-      z-index: 200;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
+    .chunk-modal { position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center; }
     .chunk-modal.hidden { display: none; }
-    .chunk-modal-backdrop {
-      position: absolute;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.45);
-    }
+    .chunk-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
     .chunk-modal-dialog {
       position: relative;
       background: #fff;
@@ -245,106 +291,104 @@
       max-height: 82vh;
       display: flex;
       flex-direction: column;
-      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.28);
+      box-shadow: 0 24px 64px rgba(0,0,0,0.28);
     }
     .chunk-modal-header {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      padding: 1rem 1.25rem 0.75rem;
-      border-bottom: 1px solid #e5e7eb;
-      gap: 0.75rem;
+      display: flex; align-items: flex-start; justify-content: space-between;
+      padding: 1rem 1.25rem 0.75rem; border-bottom: 1px solid #e5e7eb; gap: 0.75rem;
     }
     .chunk-modal-titles { flex: 1; min-width: 0; }
     .chunk-modal-title {
-      font-weight: 600;
-      font-size: 0.9375rem;
-      color: #111827;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      font-weight: 600; font-size: 0.9375rem; color: #111827;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .chunk-modal-subtitle {
-      font-size: 0.8rem;
-      color: #6b7280;
-      margin-top: 2px;
-    }
+    .chunk-modal-subtitle { font-size: 0.8rem; color: #6b7280; margin-top: 2px; }
     .chunk-modal-close {
-      background: none;
-      border: none;
-      cursor: pointer;
-      font-size: 1.1rem;
-      color: #9ca3af;
-      line-height: 1;
-      padding: 0.1rem 0.25rem;
-      flex-shrink: 0;
+      background: none; border: none; cursor: pointer;
+      font-size: 1.1rem; color: #9ca3af; line-height: 1; padding: 0.1rem 0.25rem; flex-shrink: 0;
     }
     .chunk-modal-close:hover { color: #111827; }
-    .chunk-modal-body {
-      flex: 1;
-      overflow-y: auto;
-      padding: 1rem 1.25rem;
-    }
+    .chunk-modal-body { flex: 1; overflow-y: auto; padding: 1rem 1.25rem; }
     .chunk-modal-text {
-      white-space: pre-wrap;
-      font-family: inherit;
-      font-size: 0.875rem;
-      line-height: 1.7;
-      color: #374151;
+      white-space: pre-wrap; font-family: inherit;
+      font-size: 0.875rem; line-height: 1.7; color: #374151;
     }
-    .chunk-modal-text mark {
-      background: #fef08a;
-      color: inherit;
-      border-radius: 2px;
-      padding: 0 1px;
-    }
-    .chunk-modal-hint {
-      font-size: 0.75rem;
-      color: #9ca3af;
-      padding: 0.5rem 1.25rem 0.75rem;
-      border-top: 1px solid #f3f4f6;
-    }
+    .chunk-modal-text mark { background: #fef08a; color: inherit; border-radius: 2px; padding: 0 1px; }
+    .chunk-modal-hint { font-size: 0.75rem; color: #9ca3af; padding: 0.5rem 1.25rem 0.75rem; border-top: 1px solid #f3f4f6; }
 
-    /* ── Responsive: hide sidebar on narrow screens ── */
-    @media (max-width: 640px) {
-      .sources-pane { display: none; }
+    /* ── Feedback thumbs ── */
+    .feedback-bar {
+      display: flex;
+      gap: 0.375rem;
+      margin-top: 0.375rem;
+      padding-left: 0.1rem;
     }
+    .thumb-btn {
+      background: none;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      padding: 0.2rem 0.5rem;
+      font-size: 0.8rem;
+      cursor: pointer;
+      color: #9ca3af;
+      line-height: 1;
+      transition: background 0.1s, color 0.1s, border-color 0.1s;
+    }
+    .thumb-btn:hover { border-color: #9ca3af; color: #374151; }
+    .thumb-btn.selected-up   { background: #dcfce7; border-color: #86efac; color: #15803d; }
+    .thumb-btn.selected-down { background: #fee2e2; border-color: #fca5a5; color: #dc2626; }
+    .thumb-btn:disabled { cursor: default; opacity: 0.6; }
+
+    /* ── Responsive ── */
+    @media (max-width: 900px) { .sources-pane { display: none; } }
+    @media (max-width: 600px) { .history-pane { display: none; } }
   </style>
 </head>
 <body>
 
 <header>
   <h1>Internal Docs Assistant</h1>
-  <button class="ingest-btn" id="ingestBtn" title="Rescan the docs folder and update the index">
-    ↺ Re-index docs
-  </button>
+  <div class="header-spacer"></div>
+  <span class="user-chip" id="userChip"></span>
+  <button class="header-btn" id="ingestBtn" title="Rescan the docs folder and update the index">↺ Re-index</button>
+  <a class="header-btn" href="/auth/logout" style="text-decoration:none">Sign out</a>
 </header>
 
 <div class="layout">
+
+  <!-- Left: conversation history -->
+  <div class="history-pane">
+    <div class="history-pane-header">
+      <button class="new-chat-btn" id="newChatBtn">
+        <span>＋</span> New chat
+      </button>
+    </div>
+    <div class="conv-list" id="convList">
+      <p class="conv-list-empty">No conversations yet.</p>
+    </div>
+  </div>
+
+  <!-- Centre: chat -->
   <div class="chat-pane">
     <div class="messages" id="messages">
       <div class="message assistant">
         <div class="bubble">Hello! Ask me anything about the internal documentation.</div>
       </div>
     </div>
-
     <div class="input-bar">
-      <textarea
-        id="questionInput"
-        rows="1"
-        placeholder="Ask a question about the docs…"
-        autofocus
-      ></textarea>
+      <textarea id="questionInput" rows="1" placeholder="Ask a question about the docs…" autofocus></textarea>
       <button id="sendBtn">Send</button>
     </div>
   </div>
 
+  <!-- Right: sources -->
   <div class="sources-pane">
     <h2>Sources</h2>
     <div class="sources-list" id="sourcesList">
       <p class="sources-empty">Sources from the last answer will appear here.</p>
     </div>
   </div>
+
 </div>
 
 <!-- Chunk viewer modal -->
@@ -358,9 +402,7 @@
       </div>
       <button class="chunk-modal-close" id="modalClose" title="Close">✕</button>
     </div>
-    <div class="chunk-modal-body">
-      <pre class="chunk-modal-text" id="modalText"></pre>
-    </div>
+    <div class="chunk-modal-body"><pre class="chunk-modal-text" id="modalText"></pre></div>
     <div class="chunk-modal-hint" id="modalHint"></div>
   </div>
 </div>
@@ -371,6 +413,9 @@
   const sendBtn       = document.getElementById('sendBtn');
   const sourcesList   = document.getElementById('sourcesList');
   const ingestBtn     = document.getElementById('ingestBtn');
+  const convList      = document.getElementById('convList');
+  const newChatBtn    = document.getElementById('newChatBtn');
+  const userChip      = document.getElementById('userChip');
   const chunkModal    = document.getElementById('chunkModal');
   const modalBackdrop = document.getElementById('modalBackdrop');
   const modalClose    = document.getElementById('modalClose');
@@ -379,29 +424,118 @@
   const modalText     = document.getElementById('modalText');
   const modalHint     = document.getElementById('modalHint');
 
-  let busy = false;
+  let busy                  = false;
+  let currentConversationId = null;   // null → new chat on next send
+  let currentSources        = [];
+  let currentCitations      = {};
 
-  // Per-answer state — reset at the start of each query.
-  let currentSources   = [];   // SourceReference[] from SSE sources event
-  let currentCitations = {};   // { sourceIndex: [citingSentence, ...] }
+  // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
-  // ── Auto-grow textarea ───────────────────────────────────────────────────────
+  async function init() {
+    try {
+      const me = await fetchJson('/api/me');
+      userChip.textContent = me.name;
+    } catch { /* ignore */ }
+    await loadConversations();
+  }
+
+  init();
+
+  // ── Conversation list ─────────────────────────────────────────────────────────
+
+  async function loadConversations() {
+    let convs;
+    try { convs = await fetchJson('/api/conversations'); }
+    catch { return; }
+
+    convList.innerHTML = '';
+    if (!convs.length) {
+      convList.innerHTML = '<p class="conv-list-empty">No conversations yet.</p>';
+      return;
+    }
+
+    for (const c of convs) {
+      const item = document.createElement('div');
+      item.className = 'conv-item' + (c.id === currentConversationId ? ' active' : '');
+      item.dataset.id = c.id;
+      item.innerHTML =
+        `<span class="conv-title" title="${escHtml(c.title)}">${escHtml(c.title)}</span>` +
+        `<button class="conv-delete" title="Delete conversation" data-id="${c.id}">✕</button>`;
+
+      item.addEventListener('click', () => openConversation(c.id));
+      item.querySelector('.conv-delete').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await deleteConversation(c.id);
+      });
+      convList.appendChild(item);
+    }
+  }
+
+  async function openConversation(id) {
+    if (busy) return;
+
+    currentConversationId = id;
+    setActiveConvItem(id);
+
+    let msgs;
+    try { msgs = await fetchJson(`/api/conversations/${id}/messages`); }
+    catch { return; }
+
+    // Clear chat and re-render history messages.
+    messagesEl.innerHTML = '';
+    currentSources   = [];
+    currentCitations = {};
+    sourcesList.innerHTML = '<p class="sources-empty">Sources from the last answer will appear here.</p>';
+
+    for (const m of msgs) {
+      const bubble = appendMessage(m.role === 'user' ? 'user' : 'assistant', '');
+      bubble.textContent = m.content;
+    }
+    scrollToBottom();
+  }
+
+  async function deleteConversation(id) {
+    try {
+      await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
+    } catch { return; }
+
+    if (currentConversationId === id) startNewChat();
+    await loadConversations();
+  }
+
+  function startNewChat() {
+    currentConversationId = null;
+    messagesEl.innerHTML = `
+      <div class="message assistant">
+        <div class="bubble">Hello! Ask me anything about the internal documentation.</div>
+      </div>`;
+    currentSources   = [];
+    currentCitations = {};
+    sourcesList.innerHTML = '<p class="sources-empty">Sources from the last answer will appear here.</p>';
+    setActiveConvItem(null);
+    questionInput.focus();
+  }
+
+  function setActiveConvItem(id) {
+    convList.querySelectorAll('.conv-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.id === id);
+    });
+  }
+
+  newChatBtn.addEventListener('click', startNewChat);
+
+  // ── Auto-grow textarea ────────────────────────────────────────────────────────
 
   questionInput.addEventListener('input', () => {
     questionInput.style.height = 'auto';
     questionInput.style.height = Math.min(questionInput.scrollHeight, 130) + 'px';
   });
-
   questionInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (!busy) sendQuestion();
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!busy) sendQuestion(); }
   });
-
   sendBtn.addEventListener('click', () => { if (!busy) sendQuestion(); });
 
-  // ── Re-index ─────────────────────────────────────────────────────────────────
+  // ── Re-index ──────────────────────────────────────────────────────────────────
 
   ingestBtn.addEventListener('click', async () => {
     ingestBtn.disabled = true;
@@ -412,7 +546,7 @@
     } catch {
       ingestBtn.textContent = '✗ Error';
     }
-    setTimeout(() => { ingestBtn.textContent = '↺ Re-index docs'; ingestBtn.disabled = false; }, 2000);
+    setTimeout(() => { ingestBtn.textContent = '↺ Re-index'; ingestBtn.disabled = false; }, 2000);
   });
 
   // ── Send question ─────────────────────────────────────────────────────────────
@@ -426,10 +560,8 @@
     questionInput.value = '';
     questionInput.style.height = 'auto';
 
-    // Reset per-answer state.
     currentSources   = [];
     currentCitations = {};
-
     sourcesList.innerHTML = '<p class="sources-empty">Retrieving sources…</p>';
 
     appendMessage('user', question);
@@ -443,7 +575,7 @@
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ question, conversationId: currentConversationId }),
       });
 
       if (!response.ok || !response.body) {
@@ -454,9 +586,9 @@
 
       const reader  = response.body.getReader();
       const decoder = new TextDecoder();
-      let buffer           = '';
-      let answerText       = '';
-      let thinkingRemoved  = false;
+      let buffer          = '';
+      let answerText      = '';
+      let thinkingRemoved = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -476,13 +608,21 @@
 
           if (msg.t === 'sources') {
             currentSources = msg.v ?? [];
+            // Server tells us the conversation ID for this exchange.
+            if (msg.conversationId && msg.conversationId !== currentConversationId) {
+              currentConversationId = msg.conversationId;
+              await loadConversations();        // show new conversation in sidebar
+              setActiveConvItem(currentConversationId);
+            }
             renderSources(currentSources);
           } else if (msg.t === 'text') {
             if (!thinkingRemoved) { thinking.remove(); thinkingRemoved = true; }
             answerText += msg.v;
-            // During streaming show raw text (including [^N] markers as-is).
             assistantBubble.textContent = answerText;
             scrollToBottom();
+          } else if (msg.t === 'saved') {
+            // Attach thumbs buttons now that the answer is persisted.
+            attachFeedback(assistantBubble.parentElement, msg.messageId);
           } else if (msg.t === 'error') {
             if (!thinkingRemoved) { thinking.remove(); thinkingRemoved = true; }
             assistantBubble.textContent = `Error: ${msg.v}`;
@@ -490,7 +630,6 @@
         }
       }
 
-      // Once streaming is complete, parse citations and polish the answer bubble.
       if (answerText) {
         currentCitations = extractCitations(answerText);
         finalizeAnswerBubble(assistantBubble, answerText);
@@ -509,14 +648,8 @@
 
   // ── Citation parsing ──────────────────────────────────────────────────────────
 
-  /**
-   * Scans the completed answer text for [^N] markers and collects the
-   * preceding sentence for each cited source index.
-   * Returns { sourceIndex: [sentence, ...] }.
-   */
   function extractCitations(text) {
     const citations = {};
-    // Match the sentence (up to prior sentence boundary or line break) before each [^N].
     const re = /([^\n.!?]*[.!?]?)\s*\[\^(\d+)\]/g;
     let m;
     while ((m = re.exec(text)) !== null) {
@@ -528,23 +661,15 @@
     return citations;
   }
 
-  /**
-   * Replaces [^N] markers in the completed answer with superscript links
-   * that open the corresponding source in the chunk viewer.
-   */
   function finalizeAnswerBubble(bubble, answerText) {
-    // Escape HTML, then inject <sup> cite links.
     const html = escHtml(answerText).replace(/\[\^(\d+)\]/g, (_, n) =>
       `<sup><a class="cite-ref" href="#" data-src="${n}">[${n}]</a></sup>`
     );
     bubble.innerHTML = html;
-
-    // Clicking a cite link opens the chunk modal for that source.
     bubble.querySelectorAll('.cite-ref').forEach(a => {
       a.addEventListener('click', (e) => {
         e.preventDefault();
-        const idx = parseInt(a.dataset.src, 10);
-        const src = currentSources.find(s => s.sourceIndex === idx);
+        const src = currentSources.find(s => s.sourceIndex === parseInt(a.dataset.src, 10));
         if (src) openModal(src);
       });
     });
@@ -553,7 +678,7 @@
   // ── Source sidebar ────────────────────────────────────────────────────────────
 
   function renderSources(sources) {
-    if (!sources || sources.length === 0) {
+    if (!sources?.length) {
       sourcesList.innerHTML = '<p class="sources-empty">No matching documents found.</p>';
       return;
     }
@@ -574,17 +699,14 @@
     }
   }
 
-  /** Adds "CITED" badges to source cards that were actually referenced by the LLM. */
   function markCitedSources(citations) {
     for (const [idxStr] of Object.entries(citations)) {
-      const idx  = parseInt(idxStr, 10);
-      const item = sourcesList.querySelector(`[data-source-index="${idx}"]`);
+      const item = sourcesList.querySelector(`[data-source-index="${parseInt(idxStr, 10)}"]`);
       if (!item) continue;
       item.classList.add('cited');
       const titleEl = item.querySelector('.source-title');
-      if (titleEl && !titleEl.querySelector('.cite-badge')) {
+      if (titleEl && !titleEl.querySelector('.cite-badge'))
         titleEl.insertAdjacentHTML('beforeend', '<span class="cite-badge">CITED</span>');
-      }
     }
   }
 
@@ -601,7 +723,6 @@
     const highlighted     = applyKeywordHighlights(source.chunkText ?? '', citingSentences);
 
     if (highlighted !== null) {
-      // innerHTML safe — applyKeywordHighlights returns escaped HTML with <mark> only.
       modalText.innerHTML = highlighted;
       modalHint.textContent = citingSentences.length > 0
         ? 'Highlighted words were extracted from the answer that cited this source.'
@@ -610,7 +731,6 @@
       modalText.textContent = source.chunkText ?? '';
       modalHint.textContent = '';
     }
-
     chunkModal.classList.remove('hidden');
     document.body.style.overflow = 'hidden';
   }
@@ -622,9 +742,7 @@
 
   modalClose.addEventListener('click', closeModal);
   modalBackdrop.addEventListener('click', closeModal);
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeModal();
-  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
 
   // ── Keyword highlighting ──────────────────────────────────────────────────────
 
@@ -638,11 +756,6 @@
     'will','with','would','your',
   ]);
 
-  /**
-   * Escapes `rawText` as HTML, then wraps significant keywords extracted from
-   * `citingSentences` in <mark> tags.  Returns null if there is nothing to
-   * highlight (so the caller can fall back to textContent assignment).
-   */
   function applyKeywordHighlights(rawText, citingSentences) {
     const keywords = [...new Set(
       citingSentences
@@ -652,18 +765,47 @@
     )];
 
     const escaped = escHtml(rawText);
-    if (keywords.length === 0) return escaped;
+    if (!keywords.length) return escaped;
 
-    // Longest keywords first so they aren't broken by shorter substrings.
     keywords.sort((a, b) => b.length - a.length);
-
     let html = escaped;
     for (const kw of keywords) {
-      // \b word boundary — escapeRegex so no injection via keyword text.
-      const re = new RegExp(`\\b(${escRegex(kw)})\\b`, 'gi');
-      html = html.replace(re, '<mark>$1</mark>');
+      html = html.replace(new RegExp(`\\b(${escRegex(kw)})\\b`, 'gi'), '<mark>$1</mark>');
     }
     return html;
+  }
+
+  // ── Feedback ──────────────────────────────────────────────────────────────────
+
+  function attachFeedback(messageEl, messageId) {
+    const bar = document.createElement('div');
+    bar.className = 'feedback-bar';
+
+    const up   = makeThumb('👍', 1,  messageId, bar);
+    const down = makeThumb('👎', -1, messageId, bar);
+    bar.append(up, down);
+    messageEl.appendChild(bar);
+  }
+
+  function makeThumb(emoji, rating, messageId, bar) {
+    const btn = document.createElement('button');
+    btn.className = 'thumb-btn';
+    btn.textContent = emoji;
+    btn.addEventListener('click', async () => {
+      try {
+        await fetch('/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messageId, rating }),
+        });
+        bar.querySelectorAll('.thumb-btn').forEach(b => {
+          b.disabled = true;
+          b.classList.remove('selected-up', 'selected-down');
+        });
+        btn.classList.add(rating === 1 ? 'selected-up' : 'selected-down');
+      } catch { /* ignore */ }
+    });
+    return btn;
   }
 
   // ── Utilities ─────────────────────────────────────────────────────────────────
@@ -680,21 +822,21 @@
     return bubble;
   }
 
-  function scrollToBottom() {
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+  async function fetchJson(url, opts) {
+    const res = await fetch(url, opts);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
   }
+
+  function scrollToBottom() { messagesEl.scrollTop = messagesEl.scrollHeight; }
 
   function escHtml(str) {
     return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
-  function escRegex(str) {
-    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
+  function escRegex(str) { return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 </script>
 </body>
 </html>

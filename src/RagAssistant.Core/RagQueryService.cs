@@ -6,12 +6,13 @@ using RagAssistant.Core.Models;
 
 namespace RagAssistant.Core;
 
-public sealed class RagQueryService
+public sealed class RagQueryService(
+    IEmbeddingGenerator<string, Embedding<float>> embedder,
+    IChatClient chatClient,
+    VectorStoreCollection<string, DocumentChunk> collection,
+    IOptions<RagOptions> options)
 {
-    private readonly IEmbeddingGenerator<string, Embedding<float>> _embedder;
-    private readonly IChatClient _chatClient;
-    private readonly VectorStoreCollection<string, DocumentChunk> _collection;
-    private readonly RagOptions _options;
+    private readonly RagOptions _options = options.Value;
 
     private const string SystemPrompt =
         "You are a helpful assistant for internal documentation. " +
@@ -23,32 +24,29 @@ public sealed class RagQueryService
         "If the answer is not found in the documents, say so explicitly — " +
         "do not use knowledge outside the provided context.";
 
-    public RagQueryService(
-        IEmbeddingGenerator<string, Embedding<float>> embedder,
-        IChatClient chatClient,
-        VectorStoreCollection<string, DocumentChunk> collection,
-        IOptions<RagOptions> options)
-    {
-        _embedder = embedder;
-        _chatClient = chatClient;
-        _collection = collection;
-        _options = options.Value;
-    }
-
     /// <summary>
     /// Embeds the question, retrieves the top-k chunks, and returns:
     ///   • Sources — the retrieved chunks (available before the LLM call starts)
     ///   • AnswerStream — lazy async enumerable that streams LLM tokens on demand
     /// </summary>
-    public async Task<RagQueryResult> QueryAsync(string question, CancellationToken ct = default)
+    /// <param name="history">
+    /// Optional prior conversation turns (user/assistant alternating). They are inserted
+    /// into the LLM prompt between the system message and the current user message so the
+    /// model can refer back to earlier exchanges. Vector search always runs on the current
+    /// question only — history is not re-embedded.
+    /// </param>
+    public async Task<RagQueryResult> QueryAsync(
+        string question,
+        IReadOnlyList<ChatMessage>? history = null,
+        CancellationToken ct = default)
     {
         // Step 1: embed the question.
-        var embeddings = await _embedder.GenerateAsync([question], cancellationToken: ct);
+        var embeddings = await embedder.GenerateAsync([question], cancellationToken: ct);
         var queryVector = embeddings[0].Vector;
 
         // Step 2: search the vector store.
         var hits = new List<VectorSearchResult<DocumentChunk>>();
-        await foreach (var hit in _collection.SearchAsync(queryVector, _options.TopK, cancellationToken: ct))
+        await foreach (var hit in collection.SearchAsync(queryVector, _options.TopK, cancellationToken: ct))
             hits.Add(hit);
 
         // Step 3: build source list from search results — deterministic, not derived from LLM output.
@@ -64,7 +62,7 @@ public sealed class RagQueryService
 
         // Step 4: compose the prompt and return a lazy stream for the LLM response.
         // Sources are available immediately; the answer stream is only consumed by the caller.
-        var messages = BuildMessages(question, hits);
+        var messages = BuildMessages(question, hits, history);
 
         return new RagQueryResult
         {
@@ -77,7 +75,7 @@ public sealed class RagQueryService
         IEnumerable<ChatMessage> messages,
         [EnumeratorCancellation] CancellationToken ct)
     {
-        await foreach (var update in _chatClient.GetStreamingResponseAsync(messages, cancellationToken: ct))
+        await foreach (var update in chatClient.GetStreamingResponseAsync(messages, cancellationToken: ct))
         {
             var text = update.Text;
             if (!string.IsNullOrEmpty(text))
@@ -87,7 +85,8 @@ public sealed class RagQueryService
 
     private static List<ChatMessage> BuildMessages(
         string question,
-        IReadOnlyList<VectorSearchResult<DocumentChunk>> hits)
+        IReadOnlyList<VectorSearchResult<DocumentChunk>> hits,
+        IReadOnlyList<ChatMessage>? history)
     {
         var context = hits.Count == 0
             ? "(No relevant documentation found.)"
@@ -110,10 +109,16 @@ public sealed class RagQueryService
             Question: {question}
             """;
 
-        return
-        [
-            new ChatMessage(ChatRole.System, SystemPrompt),
-            new ChatMessage(ChatRole.User, userContent),
-        ];
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.System, SystemPrompt),
+        };
+
+        // Inject prior turns so the model has conversational context.
+        if (history is { Count: > 0 })
+            messages.AddRange(history);
+
+        messages.Add(new(ChatRole.User, userContent));
+        return messages;
     }
 }

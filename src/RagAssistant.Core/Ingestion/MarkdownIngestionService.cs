@@ -11,28 +11,17 @@ using YamlDotNet.Serialization.NamingConventions;
 
 namespace RagAssistant.Core.Ingestion;
 
-public sealed class MarkdownIngestionService
+public sealed class MarkdownIngestionService(
+    IEmbeddingGenerator<string, Embedding<float>> embedder,
+    VectorStoreCollection<string, DocumentChunk> collection,
+    IOptions<RagOptions> options,
+    ILogger<MarkdownIngestionService> logger)
 {
-    private readonly IEmbeddingGenerator<string, Embedding<float>> _embedder;
-    private readonly VectorStoreCollection<string, DocumentChunk> _collection;
-    private readonly RagOptions _options;
-    private readonly ILogger<MarkdownIngestionService> _logger;
+    private readonly RagOptions _options = options.Value;
 
     // Matches any ATX heading line: optional leading spaces, 1–6 #, required space, text.
     private static readonly Regex HeadingRegex =
         new(@"^[ \t]*(#{1,6})[ \t]+(.+?)[ \t]*$", RegexOptions.Multiline | RegexOptions.Compiled);
-
-    public MarkdownIngestionService(
-        IEmbeddingGenerator<string, Embedding<float>> embedder,
-        VectorStoreCollection<string, DocumentChunk> collection,
-        IOptions<RagOptions> options,
-        ILogger<MarkdownIngestionService> logger)
-    {
-        _embedder = embedder;
-        _collection = collection;
-        _options = options.Value;
-        _logger = logger;
-    }
 
     /// <summary>
     /// Scans the configured docs folder, embeds any new or changed content,
@@ -41,12 +30,12 @@ public sealed class MarkdownIngestionService
     /// </summary>
     public async Task IngestAllAsync(CancellationToken ct = default)
     {
-        await _collection.EnsureCollectionExistsAsync(ct);
+        await collection.EnsureCollectionExistsAsync(ct);
 
         var docsFolder = Path.GetFullPath(_options.DocsFolder);
         if (!Directory.Exists(docsFolder))
         {
-            _logger.LogWarning("Docs folder not found: {Path}", docsFolder);
+            logger.LogWarning("Docs folder not found: {Path}", docsFolder);
             return;
         }
 
@@ -69,7 +58,7 @@ public sealed class MarkdownIngestionService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to ingest {File}", relativePath);
+                logger.LogError(ex, "Failed to ingest {File}", relativePath);
             }
         }
 
@@ -78,14 +67,14 @@ public sealed class MarkdownIngestionService
         {
             if (currentRelativePaths.Contains(path)) continue;
 
-            _logger.LogInformation("Removing deleted file from store: {Path}", path);
+            logger.LogInformation("Removing deleted file from store: {Path}", path);
             var staleKeys = Enumerable.Range(0, oldChunkCount).Select(i => BuildKey(path, i));
-            await _collection.DeleteAsync(staleKeys, ct);
+            await collection.DeleteAsync(staleKeys, ct);
             metadata.Remove(path);
         }
 
         await SaveMetadataAsync(metadataPath, metadata, ct);
-        _logger.LogInformation("Ingestion complete — {Count} file(s) processed.", mdFiles.Length);
+        logger.LogInformation("Ingestion complete — {Count} file(s) processed.", mdFiles.Length);
     }
 
     private async Task IngestFileAsync(
@@ -98,29 +87,29 @@ public sealed class MarkdownIngestionService
         var (frontMatter, body) = ParseFrontMatter(rawText);
         var chunks = BuildChunks(body, frontMatter, relativePath);
 
-        _logger.LogDebug("Ingesting {File}: {N} chunk(s)", relativePath, chunks.Count);
+        logger.LogDebug("Ingesting {File}: {N} chunk(s)", relativePath, chunks.Count);
 
         if (chunks.Count == 0)
         {
-            _logger.LogWarning("No content found in {File}, skipping.", relativePath);
+            logger.LogWarning("No content found in {File}, skipping.", relativePath);
             return;
         }
 
         // Embed all chunk texts in one batch to avoid N individual round-trips to Ollama.
         var texts = chunks.Select(c => c.Content).ToList();
-        var embeddings = await _embedder.GenerateAsync(texts, cancellationToken: ct);
+        var embeddings = await embedder.GenerateAsync(texts, cancellationToken: ct);
         for (int i = 0; i < chunks.Count; i++)
             chunks[i].Embedding = embeddings[i].Vector;
 
-        await _collection.UpsertAsync(chunks, ct);
+        await collection.UpsertAsync(chunks, ct);
 
         // Delete trailing stale chunks if this ingest produced fewer chunks than last time.
         if (metadata.TryGetValue(relativePath, out var oldCount) && oldCount > chunks.Count)
         {
             var staleKeys = Enumerable.Range(chunks.Count, oldCount - chunks.Count)
                 .Select(i => BuildKey(relativePath, i));
-            await _collection.DeleteAsync(staleKeys, ct);
-            _logger.LogDebug("Deleted {N} stale chunk(s) from {File}", oldCount - chunks.Count, relativePath);
+            await collection.DeleteAsync(staleKeys, ct);
+            logger.LogDebug("Deleted {N} stale chunk(s) from {File}", oldCount - chunks.Count, relativePath);
         }
 
         metadata[relativePath] = chunks.Count;
@@ -310,7 +299,7 @@ public sealed class MarkdownIngestionService
     }
 }
 
-// Maps to YAML front matter fields. Internal so it's not exposed in public API.
+// Maps to YAML front matter fields. Internal, so it's not exposed in public API.
 internal sealed class FrontMatterData
 {
     public string? Title { get; set; }
