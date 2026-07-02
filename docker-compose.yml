@@ -69,6 +69,7 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: admin
       KC_HOSTNAME_STRICT: "false"
       KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro
     healthcheck:
