@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
@@ -46,6 +47,19 @@ vectorDbPath = Path.IsPathRooted(vectorDbPath)
     : Path.Combine(builder.Environment.ContentRootPath, vectorDbPath);
 
 var vectorDbConnectionString = $"Data Source={vectorDbPath}";
+
+// ── Forwarded headers (reverse-proxy / Codespaces TLS termination) ────────────
+// Reads X-Forwarded-Proto and X-Forwarded-Host so ASP.NET builds redirect_uri
+// with the correct public scheme and hostname instead of the internal container URL.
+
+builder.Services.Configure<ForwardedHeadersOptions>(opts =>
+{
+    opts.ForwardedHeaders = ForwardedHeaders.XForwardedFor
+                          | ForwardedHeaders.XForwardedProto
+                          | ForwardedHeaders.XForwardedHost;
+    opts.KnownNetworks.Clear();
+    opts.KnownProxies.Clear();
+});
 
 // ── Authentication — Keycloak OIDC ────────────────────────────────────────────
 
@@ -168,6 +182,7 @@ builder.Services.AddSingleton(sp =>
 
 var app = builder.Build();
 
+app.UseForwardedHeaders();
 app.UseAuthentication();
 app.UseAuthorization();
 
