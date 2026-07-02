@@ -83,7 +83,7 @@ builder.Services
         // When Keycloak runs behind a TLS proxy it advertises its external URL in the
         // discovery doc, so the PAR endpoint points to the public internet rather than
         // the internal Docker host.  Standard redirects are sufficient here.
-        o.PushedAuthorizationBehavior = PushedAuthorizationBehavior.Disabled;
+        o.PushedAuthorizationBehavior = PushedAuthorizationBehavior.Disable;
         o.Scope.Add("openid");
         o.Scope.Add("profile");
 
