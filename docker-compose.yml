@@ -17,7 +17,7 @@ services:
       Rag__VectorDbPath: /data/rag_store.db
       Rag__DocsFolder: /docs
       Oidc__Authority: http://keycloak:8080/realms/cortex
-      Oidc__PublicOrigin: http://localhost:8180
+      Oidc__PublicOrigin: https://stunning-space-winner-r4vg4gppvrq7hpg6p-8180.app.github.dev
       Oidc__ClientId: cortex-app
       Oidc__ClientSecret: cortex-secret
       # Docker-specific OIDC overrides:
