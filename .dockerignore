@@ -1,5 +1,7 @@
 src/**/bin/
 src/**/obj/
+src/RagAssistant.Web/ClientApp/node_modules/
+src/RagAssistant.Web/wwwroot/assets/
 
 # Windows publish artifacts
 publish/

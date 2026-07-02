@@ -12,7 +12,7 @@ services:
       - ado-cache:/docs/ado-sync  # named volume for ADO-synced files
       - rag-data:/data            # SQLite DB + metadata survive container replacement
     environment:
-      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_ENVIRONMENT: Production
       Ollama__BaseUrl: http://ollama:11434
       Rag__VectorDbPath: /data/rag_store.db
       Rag__DocsFolder: /docs
@@ -20,6 +20,15 @@ services:
       Oidc__PublicOrigin: http://localhost:8180
       Oidc__ClientId: cortex-app
       Oidc__ClientSecret: cortex-secret
+      # Docker-specific OIDC overrides:
+      # Keycloak is reached over the internal Docker network (HTTP), so HTTPS metadata
+      # and issuer validation cannot apply without a proper TLS setup.
+      # For a true production deployment with HTTPS Keycloak, remove these overrides
+      # and set ValidIssuers__0 to your realm URL instead.
+      Oidc__RequireHttpsMetadata: "false"
+      Oidc__ValidateIssuer: "false"
+      Oidc__ValidateAudience: "true"
+      Oidc__ValidAudiences__0: "cortex-app"
       # Azure DevOps ingestion — leave BaseUrl empty to disable
       AzureDevOps__BaseUrl: ""
       AzureDevOps__Project: ""
@@ -29,11 +38,26 @@ services:
       AzureDevOps__PersonalAccessToken: ""
       AzureDevOps__WebhookSecret: ""
     depends_on:
-      ollama:
-        condition: service_healthy
+      model-init:
+        condition: service_completed_successfully
       keycloak:
         condition: service_healthy
     restart: unless-stopped
+
+  # Pulls Ollama models into the shared volume on first run (no-op if already present).
+  model-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        ollama pull nomic-embed-text &&
+        ollama pull qwen2.5:7b-instruct-q4_K_M
+    restart: "no"
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.2
@@ -58,7 +82,7 @@ services:
   ollama:
     image: ollama/ollama:latest
     volumes:
-      - ollama-models:/root/.ollama   # models live here; see scripts/pull-models.sh
+      - ollama-models:/root/.ollama
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 10s

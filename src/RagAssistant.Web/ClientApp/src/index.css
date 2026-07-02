@@ -1,0 +1,5 @@
+@import "tailwindcss";
+@import "highlight.js/styles/github.css";
+
+/* Prevent HLjs background from overriding our bubble styles */
+.hljs { background: transparent !important; }

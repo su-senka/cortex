@@ -5,3 +5,14 @@ riderModule.iml
 /_ReSharper.Caches/
 
 /.idea
+
+# React / Node
+src/RagAssistant.Web/ClientApp/node_modules/
+src/RagAssistant.Web/wwwroot/assets/
+
+# Runtime data
+*.db
+*.db-shm
+*.db-wal
+src/RagAssistant.Web/rag_metadata.json
+dp-keys/

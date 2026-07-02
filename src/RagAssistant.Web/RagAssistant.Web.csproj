@@ -14,6 +14,13 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <SpaRoot>ClientApp\</SpaRoot>
   </PropertyGroup>
+
+  <!-- Build the React app before publish so wwwroot is up to date. -->
+  <Target Name="PublishClientApp" BeforeTargets="Publish" Condition="'$(SkipSpa)'!='true'">
+    <Exec Command="npm install" WorkingDirectory="$(SpaRoot)" />
+    <Exec Command="npm run build" WorkingDirectory="$(SpaRoot)" />
+  </Target>
 
 </Project>

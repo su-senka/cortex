@@ -26,6 +26,16 @@ var ollamaCfg  = builder.Configuration.GetSection("Ollama");
 var ragCfg     = builder.Configuration.GetSection("Rag");
 var oidcCfg    = builder.Configuration.GetSection("Oidc");
 
+var requireHttpsMetadata = oidcCfg.GetValue("RequireHttpsMetadata", true);
+var validateIssuer       = oidcCfg.GetValue("ValidateIssuer", true);
+var validateAudience     = oidcCfg.GetValue("ValidateAudience", true);
+var validIssuers         = oidcCfg.GetSection("ValidIssuers").Get<string[]>();
+var validAudiences       = oidcCfg.GetSection("ValidAudiences").Get<string[]>();
+var adminRole            = oidcCfg["AdminRole"] ?? "cortex-admin";
+var cookieSecurePolicy   = requireHttpsMetadata
+    ? CookieSecurePolicy.Always
+    : CookieSecurePolicy.None;
+
 var ollamaBaseUrl  = ollamaCfg["BaseUrl"]      ?? "http://localhost:11434";
 var chatModel      = ollamaCfg["ChatModel"]    ?? "qwen2.5:7b-instruct-q4_K_M";
 var embeddingModel = ollamaCfg["EmbeddingModel"] ?? "nomic-embed-text";
@@ -69,17 +79,19 @@ builder.Services
         o.ResponseType = "code";
         o.SaveTokens   = true;
         o.GetClaimsFromUserInfoEndpoint = false;
-        o.RequireHttpsMetadata = false;
+        o.RequireHttpsMetadata = requireHttpsMetadata;
         o.Scope.Add("openid");
         o.Scope.Add("profile");
 
         o.CorrelationCookie.SameSite    = SameSiteMode.Lax;
-        o.CorrelationCookie.SecurePolicy = CookieSecurePolicy.None;
+        o.CorrelationCookie.SecurePolicy = cookieSecurePolicy;
         o.NonceCookie.SameSite          = SameSiteMode.Lax;
-        o.NonceCookie.SecurePolicy      = CookieSecurePolicy.None;
+        o.NonceCookie.SecurePolicy      = cookieSecurePolicy;
 
-        o.TokenValidationParameters.ValidateIssuer   = false;
-        o.TokenValidationParameters.ValidateAudience = false;
+        o.TokenValidationParameters.ValidateIssuer   = validateIssuer;
+        o.TokenValidationParameters.ValidateAudience = validateAudience;
+        if (validIssuers?.Length   > 0) o.TokenValidationParameters.ValidIssuers   = validIssuers;
+        if (validAudiences?.Length > 0) o.TokenValidationParameters.ValidAudiences = validAudiences;
 
         var publicOrigin  = oidcCfg["PublicOrigin"]?.TrimEnd('/');
         var privateOrigin = string.IsNullOrEmpty(publicOrigin)
@@ -112,7 +124,9 @@ builder.Services
         };
     });
 
-builder.Services.AddAuthorization();
+builder.Services.AddTransient<IClaimsTransformation, KeycloakRolesClaimsTransformation>();
+builder.Services.AddAuthorization(opts =>
+    opts.AddPolicy("Admin", p => p.RequireRole(adminRole)));
 
 // Persist Data Protection keys to the same directory as the vector DB so they survive
 // container restarts. Without this, correlation cookies from in-flight OIDC flows become
@@ -216,11 +230,12 @@ using (var scope = app.Services.CreateScope())
 // GET /api/me — current user's identity (called by the frontend on load).
 app.MapGet("/api/me", (HttpContext ctx) =>
 {
-    var name = ctx.User.FindFirstValue("preferred_username")
-               ?? ctx.User.FindFirstValue(ClaimTypes.Name)
-               ?? "Unknown";
-    var sub  = ctx.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "";
-    return Results.Ok(new { name, sub });
+    var name    = ctx.User.FindFirstValue("preferred_username")
+                 ?? ctx.User.FindFirstValue(ClaimTypes.Name)
+                 ?? "Unknown";
+    var sub     = ctx.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "";
+    var isAdmin = ctx.User.IsInRole(adminRole);
+    return Results.Ok(new { name, sub, isAdmin });
 }).RequireAuthorization();
 
 // GET /auth/logout — sign out of both the local cookie and Keycloak.
@@ -283,14 +298,14 @@ app.MapDelete("/api/conversations/{id}", async (
 
 // ── RAG endpoints ─────────────────────────────────────────────────────────────
 
-// POST /api/ingest — rescans the docs folder and upserts changes.
+// POST /api/ingest — rescans the docs folder and upserts changes. Admin only.
 app.MapPost("/api/ingest", async (
     MarkdownIngestionService ingestion,
     CancellationToken ct) =>
 {
     await ingestion.IngestAllAsync(ct);
     return Results.Ok(new { message = "Ingestion complete." });
-}).RequireAuthorization();
+}).RequireAuthorization("Admin");
 
 // POST /api/ado-webhook — receives ADO Server push events and triggers re-indexing.
 app.MapPost("/api/ado-webhook", async (
@@ -418,10 +433,8 @@ app.MapPost("/api/chat", async (
     }
     finally
     {
-        await response.WriteAsync("data: [DONE]\n\n", ct);
-        await response.Body.FlushAsync(ct);
-
-        // Save the exchange even if streaming was interrupted, as long as we have some answer.
+        // Save the exchange and send the 'saved' event BEFORE [DONE].
+        // The client exits the SSE stream on [DONE], so anything sent after it is lost.
         if (fullAnswer.Length > 0)
         {
             try
@@ -429,7 +442,6 @@ app.MapPost("/api/chat", async (
                 var assistantMsgId = await conversations.SaveExchangeAsync(
                     conversationId, req.Question, fullAnswer.ToString(), CancellationToken.None);
 
-                // Tell the client the assistant message ID so it can link feedback to it.
                 var savedJson = JsonSerializer.Serialize(
                     new { t = "saved", messageId = assistantMsgId }, SseJsonOptions);
                 await response.WriteAsync($"data: {savedJson}\n\n", CancellationToken.None);
@@ -440,6 +452,9 @@ app.MapPost("/api/chat", async (
                 logger.LogError(ex, "Failed to persist conversation exchange.");
             }
         }
+
+        await response.WriteAsync("data: [DONE]\n\n", CancellationToken.None);
+        await response.Body.FlushAsync(CancellationToken.None);
     }
 }).RequireAuthorization();
 
@@ -469,4 +484,30 @@ static partial class Program
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
+}
+
+// Maps Keycloak realm_access.roles into standard ASP.NET role claims so that
+// RequireRole / [Authorize(Roles=...)] works without Keycloak-specific code at each call site.
+sealed class KeycloakRolesClaimsTransformation : IClaimsTransformation
+{
+    public Task<ClaimsPrincipal> TransformAsync(ClaimsPrincipal principal)
+    {
+        var realmAccess = principal.FindFirstValue("realm_access");
+        if (string.IsNullOrEmpty(realmAccess))
+            return Task.FromResult(principal);
+
+        using var doc = JsonDocument.Parse(realmAccess);
+        if (!doc.RootElement.TryGetProperty("roles", out var rolesEl))
+            return Task.FromResult(principal);
+
+        var identity = (ClaimsIdentity)principal.Identity!;
+        foreach (var role in rolesEl.EnumerateArray())
+        {
+            var roleName = role.GetString();
+            if (!string.IsNullOrEmpty(roleName) && !identity.HasClaim(ClaimTypes.Role, roleName))
+                identity.AddClaim(new Claim(ClaimTypes.Role, roleName));
+        }
+
+        return Task.FromResult(principal);
+    }
 }
