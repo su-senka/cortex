@@ -80,6 +80,10 @@ builder.Services
         o.SaveTokens   = true;
         o.GetClaimsFromUserInfoEndpoint = false;
         o.RequireHttpsMetadata = requireHttpsMetadata;
+        // When Keycloak runs behind a TLS proxy it advertises its external URL in the
+        // discovery doc, so the PAR endpoint points to the public internet rather than
+        // the internal Docker host.  Standard redirects are sufficient here.
+        o.PushedAuthorizationBehavior = PushedAuthorizationBehavior.Disabled;
         o.Scope.Add("openid");
         o.Scope.Add("profile");
 

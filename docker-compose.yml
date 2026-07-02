@@ -8,28 +8,21 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./docs:/docs              # bind-mount your docs folder
-      - ado-cache:/docs/ado-sync  # named volume for ADO-synced files
-      - rag-data:/data            # SQLite DB + metadata survive container replacement
+      - ./docs:/docs
+      - ado-cache:/docs/ado-sync
+      - rag-data:/data
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       Ollama__BaseUrl: http://ollama:11434
       Rag__VectorDbPath: /data/rag_store.db
       Rag__DocsFolder: /docs
       Oidc__Authority: http://keycloak:8080/realms/cortex
-      Oidc__PublicOrigin: https://stunning-space-winner-r4vg4gppvrq7hpg6p-8180.app.github.dev
       Oidc__ClientId: cortex-app
       Oidc__ClientSecret: cortex-secret
-      # Docker-specific OIDC overrides:
-      # Keycloak is reached over the internal Docker network (HTTP), so HTTPS metadata
-      # and issuer validation cannot apply without a proper TLS setup.
-      # For a true production deployment with HTTPS Keycloak, remove these overrides
-      # and set ValidIssuers__0 to your realm URL instead.
       Oidc__RequireHttpsMetadata: "false"
       Oidc__ValidateIssuer: "false"
       Oidc__ValidateAudience: "true"
       Oidc__ValidAudiences__0: "cortex-app"
-      # Azure DevOps ingestion — leave BaseUrl empty to disable
       AzureDevOps__BaseUrl: ""
       AzureDevOps__Project: ""
       AzureDevOps__Repository: ""
@@ -44,7 +37,6 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Pulls Ollama models into the shared volume on first run (no-op if already present).
   model-init:
     image: ollama/ollama:latest
     depends_on:
@@ -69,7 +61,6 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: admin
       KC_HOSTNAME_STRICT: "false"
       KC_HTTP_ENABLED: "true"
-      KC_PROXY_HEADERS: xforwarded
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro
     healthcheck:
@@ -91,14 +82,6 @@ services:
       retries: 12
       start_period: 15s
     restart: unless-stopped
-    # CPU-only by default. To use a GPU add:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
 
 volumes:
   rag-data:

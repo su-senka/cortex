@@ -13,14 +13,17 @@
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "redirectUris": [
+        "http://localhost:8080/*",
         "http://localhost:8080/signin-oidc",
-        "http://localhost:8080/*"
+        "https://*.app.github.dev/*",
+        "https://*.app.github.dev/signin-oidc"
       ],
       "webOrigins": [
-        "http://localhost:8080"
+        "http://localhost:8080",
+        "https://*.app.github.dev"
       ],
       "attributes": {
-        "post.logout.redirect.uris": "http://localhost:8080/*"
+        "post.logout.redirect.uris": "http://localhost:8080/*##https://*.app.github.dev/*"
       }
     }
   ],
