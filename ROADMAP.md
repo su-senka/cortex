@@ -1,188 +1,256 @@
 # Cortex — Development Roadmap
 
-This document captures the current state of the application and lays out development directions toward a production-grade, publicly shareable tool.
+This document captures the current state of the application and the prioritised path toward a production-grade, publicly shareable tool.
 
 ---
 
 ## Current State
 
-**What Cortex is:** A fully-local RAG Q&A assistant for internal documentation. It runs offline via Ollama, stores vectors in a single SQLite file, authenticates via Keycloak OIDC, and ships as a Docker Compose stack. The backend is clean, idiomatic ASP.NET Core 10 with a well-structured `Core` / `Web` separation. The frontend is a single-file vanilla HTML/JS/CSS application.
+**What Cortex is:** A fully-local RAG Q&A assistant for internal documentation. Runs offline via Ollama, stores vectors in SQLite, authenticates via Keycloak OIDC, and ships as a Docker Compose stack. Backend is clean, idiomatic ASP.NET Core 10 with a `Core` / `Web` separation. Frontend is React 19 + Vite + Tailwind CSS, served as a static SPA from ASP.NET's `wwwroot`.
 
-**What works well:**
+**What works today:**
 - Zero cloud dependency — everything runs on local hardware
 - Deterministic citations (sources retrieved before the LLM call, no hallucinated references)
 - Idempotent ingestion with chunk-level upserts and deletion of stale chunks
-- Conversation history with per-message feedback (👍 / 👎)
-- Azure DevOps webhook-driven re-indexing
-- OIDC authentication with Docker split-brain support
-- Compact Docker Compose deployment (Ollama + Keycloak + app in one `docker compose up`)
+- SSE streaming chat responses with Markdown rendering and syntax highlighting
+- Inline citation footnotes `[^N]` that open a source passage modal with keyword highlighting
+- Thumbs-up / thumbs-down feedback per assistant message
+- Conversation history with per-user isolation
+- Azure DevOps webhook-triggered re-indexing; admin-only `/api/ingest` endpoint
+- OIDC authentication (cookie-based server-side flow) via Keycloak
+- Two launch environments: `./start-local.sh` (localhost) and `./start-codespaces.sh` (GitHub Codespaces, dynamic redirect URI registration)
+- React UI confirmed running with auth, chat streaming, conversation history, and citations all wired up
 
 **Gaps before production or public release:**
-- No tests
-- UI is a single HTML file — no Markdown rendering in chat, no component reuse, fragile to extend
+- No observability — no traces, no structured logs, no metrics
+- Environment config scattered between shell scripts and `appsettings.json`; no clean `Development` / `Codespaces` / `Production` config layer
+- UI functional but not visually polished; missing modern chat-app UX patterns
 - Several OIDC security settings are permissive (`ValidateIssuer = false`, `RequireHttpsMetadata = false`)
 - No HTTPS or TLS in the Docker stack
-- Re-index button is accessible to all authenticated users
-- No health/readiness endpoints
-- No telemetry or observability
-- Startup ingestion blocks the app start (synchronous)
-- No admin interface for reviewing feedback or usage
-- PAT and other secrets embedded in config files rather than a secret store
+- PAT and other secrets embedded in config files
+- No health / readiness endpoints
+- Startup ingestion blocks app start (synchronous)
+- No tests
 
 ---
 
-## Direction 1 — React Frontend (Highest Impact on UX)
+## Direction 1 — Observability & Audit  *(do first)*
 
-The single HTML file is the most visible gap when sharing externally. A React rewrite enables proper Markdown rendering in chat, better component reuse, and a testable UI layer.
+The single highest-leverage investment for understanding what the app is doing — and for debugging the RAG pipeline when answers are wrong.
 
-**Recommended stack:**
-- **Vite + React 19 + TypeScript** — fast dev server, small bundle, no bundler config overhead
-- **react-markdown + rehype-highlight** — renders the LLM's Markdown output (code blocks, lists, bold) correctly inside chat bubbles
-- **Tailwind CSS** — replaces the hand-rolled CSS, consistent design tokens
-- **Zustand** — minimal state management for conversations / messages
-- **@tanstack/react-query** — async data fetching with caching and refetch for conversations list
+### Recommended approach: .NET Aspire Dashboard (standalone)
 
-**Approach:** Keep the existing ASP.NET backend unchanged. Add a Vite project in `src/RagAssistant.Web/ClientApp/` and configure `dotnet run` to proxy API requests to it in development. In production, Vite's build output is served as static files by ASP.NET (same pattern as `dotnet new react`).
+Run the Aspire Dashboard as an extra container in `docker-compose.yml`. It is a fully self-contained OpenTelemetry viewer (traces, structured logs, metrics) with no Prometheus, Grafana, or Collector required. The app sends OTLP over gRPC; the dashboard displays it. No changes to the app host model or the Compose orchestration are needed.
 
-**Key UI improvements the rewrite unlocks:**
-- Markdown rendering (code blocks, tables, lists in LLM answers)
-- Collapsible conversation history with search
-- Source pane that highlights the exact retrieved passage
-- Keyboard shortcuts (⌘K to focus, ⌘N for new chat)
-- Dark mode toggle
-- Mobile-friendly layout (sidebar as a drawer on small screens)
-- Accessible focus management throughout
+```yaml
+# docker-compose.yml addition
+aspire-dashboard:
+  image: mcr.microsoft.com/dotnet/aspire-dashboard:latest
+  ports:
+    - "18888:18888"   # Dashboard UI
+    - "18889:18889"   # OTLP gRPC receiver
+  environment:
+    DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS: "true"
+```
+
+Wire the app:
+
+```csharp
+// Program.cs
+builder.Services.AddOpenTelemetry()
+    .WithTracing(t => t
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddOtlpExporter())
+    .WithMetrics(m => m
+        .AddAspNetCoreInstrumentation()
+        .AddOtlpExporter())
+    .WithLogging(l => l.AddOtlpExporter());
+```
+
+Set `OTEL_EXPORTER_OTLP_ENDPOINT=http://aspire-dashboard:18889` in the app's Compose environment.
+
+### What to instrument
+
+| Span / metric | Why |
+|---|---|
+| Embedding call (duration) | Catch slow nomic-embed-text pulls |
+| Vector search (duration + result count) | Diagnose retrieval misses |
+| LLM streaming call (time-to-first-token, total duration) | Baseline model latency |
+| `/api/chat` request (end-to-end) | User-visible latency |
+| Ingestion run (docs processed, chunks upserted/deleted) | Catch silently failing re-indexes |
+
+### Structured logging
+
+Replace the default console logger with **Serilog** + `Serilog.Sinks.Console` using `JsonFormatter`. The Aspire Dashboard ingests structured logs natively — every `ILogger.LogInformation(...)` call becomes a searchable, filterable record in the UI.
+
+### Feedback audit view
+
+The `feedback` table stores thumbs-up/down per message. Add a read-only `/api/admin/feedback` endpoint (role-gated to `admin`) returning aggregated stats: top-rated questions, low-rated questions, query volume over time, most-cited files. This surfaces the primary signal for RAG quality improvement without building a separate admin UI yet.
 
 ---
 
-## Direction 2 — Production Hardening
+## Direction 2 — Clean Environment Separation  *(do second)*
 
-Items required before using this with a real team, in priority order.
+Currently, environment-specific config is driven by shell scripts and commented-out `appsettings.json` blocks. Replace this with a proper ASP.NET config layer so each environment is self-describing and composable.
 
-### Security
+### Config layer target
+
+| File | Purpose |
+|---|---|
+| `appsettings.json` | Shared defaults; no secrets, no hostnames |
+| `appsettings.Development.json` | Local dev overrides (`localhost`, `RequireHttpsMetadata = false`, etc.) |
+| `appsettings.Codespaces.json` | Codespaces overrides; consumed when `ASPNETCORE_ENVIRONMENT=Codespaces` |
+| `appsettings.Production.json` | Strict OIDC validation, HTTPS redirection, structured logging |
+| `docker-compose.override.yml` | Host-level secrets injected as env vars, never committed |
+
+### Actions
+
+- Set `ASPNETCORE_ENVIRONMENT` in each Compose profile (`development`, `codespaces`, `production`) rather than in shell scripts
+- Replace the `start-local.sh` / `start-codespaces.sh` divergence with `docker compose --profile local up` and `docker compose --profile codespaces up`
+- Pull the Keycloak admin password, ADO PAT, and webhook secret from environment variables (already in `.env`) rather than hardcoded in `appsettings.json`
+- Add `appsettings.Production.json` that sets `ValidateIssuer = true`, `ValidateAudience = true`, `ValidIssuers`, `ValidAudiences`, and `RequireHttpsMetadata = true`
+- Document all environment variables in `README.md` with a `docker-compose.override.yml` example
+
+### HTTPS for production
+
+Add an **nginx** reverse-proxy service to the Compose stack for production:
+- Self-signed cert for LAN/intranet use (generated once, mounted as a volume)
+- Certbot sidecar for public deployments with a real domain
+
+---
+
+## Direction 3 — UI Polish  *(do third)*
+
+The UI is functional but visually dated compared to modern chat products. The goal here is not a redesign — it is a targeted set of improvements that lift perceived quality to the level of ChatGPT / Claude.ai without changing the architecture.
+
+### High-impact changes
+
+| Area | Change |
+|---|---|
+| **Chat input** | Auto-expanding textarea (grows to ~5 lines, then scrolls); submit on `Enter`, newline on `Shift+Enter` |
+| **Message bubbles** | User messages right-aligned with a distinct background; assistant messages full-width with no bubble; remove visual symmetry |
+| **Streaming cursor** | Blinking `▋` appended during token streaming; disappears when `[DONE]` arrives |
+| **Typing / loading state** | Three-dot animated indicator between user message and first token |
+| **Empty state** | Centred prompt suggestions on a fresh conversation ("What is the VPN setup process?", "How do I rotate a TLS cert?") |
+| **Sidebar** | Conversation list with relative timestamps; keyboard shortcut `⌘K` to focus the search input |
+| **New conversation** | Sticky `+ New chat` button at top of sidebar; `⌘N` shortcut |
+| **Source panel** | Collapsible; show a preview card (file path + first 2 lines of the passage) before the user opens the modal |
+| **Dark mode** | System-preference-respecting `prefers-color-scheme` toggle stored in `localStorage` |
+| **Mobile layout** | Sidebar as a slide-in drawer; source panel hidden by default on small screens |
+| **Scrolling** | Auto-scroll to bottom during streaming; "Scroll to bottom" button appears when user scrolls up mid-stream |
+| **Copy button** | Per-message copy-to-clipboard button (appears on hover) |
+
+### Accessibility
+
+- Focus the chat input automatically after page load and after each response completes
+- `aria-live="polite"` region for streaming tokens so screen readers announce new content
+- All interactive elements keyboard-navigable
+
+---
+
+## Direction 4 — Security Hardening  *(do alongside Direction 2 for prod)*
 
 | Issue | Fix |
-|-------|-----|
-| `RequireHttpsMetadata = false` | Enable for production; add a flag for `Development` override only |
-| `ValidateIssuer = false` / `ValidateAudience = false` | Set both to `true` and configure `ValidIssuers` / `ValidAudiences` |
-| Re-index endpoint open to all users | Add an `admin` role check via Keycloak roles claim |
-| ADO PAT in config | Use ASP.NET Data Protection or pull from environment secrets at runtime |
-| HMAC-SHA1 for ADO webhook | Acceptable for ADO Server compatibility; document the limitation |
-| No HTTPS in Docker stack | Add an nginx reverse proxy service in `docker-compose.yml` with a self-signed cert for LAN use, or a Let's Encrypt Certbot sidecar |
-
-### Reliability
-
-- **Health endpoints** — add `/health` (liveness) and `/health/ready` (readiness, checks Ollama reachability) using `Microsoft.AspNetCore.Diagnostics.HealthChecks`. The Docker Compose `app` service healthcheck should call `/health/ready`.
-- **Async startup ingestion** — move ingestion out of the startup path into a `BackgroundService`. The app should serve traffic immediately; ingestion runs in background and exposes a status flag on `/health/ready` or a dedicated `/api/ingest/status` endpoint.
-- **Concurrency control on SQLite** — the current `ConversationService` opens a new connection per call, which can hit SQLite WAL limits under concurrent load. Switch to a connection pool or a dedicated singleton connection with a semaphore, or migrate to `Microsoft.Data.Sqlite` in WAL mode with `Pooling=True`.
-- **Rate limiting** — add `dotnet-ratelimiting` middleware: per-user sliding-window limiter on `/api/chat` to prevent accidental hammering of the Ollama GPU.
-
-### Configuration
-
-- Document all environment variables in `README.md` with a `docker-compose.override.yml` example for secrets
-- Add `appsettings.Production.json` that enables HTTPS redirection, strict OIDC validation, and structured logging
+|---|---|
+| `RequireHttpsMetadata = false` | Enable in `appsettings.Production.json`; keep `false` in `Development` only |
+| `ValidateIssuer = false` / `ValidateAudience = false` | Set both to `true` in production config; configure `ValidIssuers` / `ValidAudiences` |
+| Re-index endpoint open to all users | Add an `admin` Keycloak role claim check on `/api/ingest` |
+| ADO PAT in config | Read from environment variable at runtime; document in `.env.example` |
+| No HTTPS in Docker stack | nginx reverse proxy (see Direction 2) |
+| HMAC-SHA1 for ADO webhook | Acceptable for ADO Server compatibility; add a comment documenting the limitation |
 
 ---
 
-## Direction 3 — Observability & Admin
+## Direction 5 — Reliability  *(do before exposing to a team)*
 
-### Telemetry
-
-- **OpenTelemetry** — add `OpenTelemetry.AspNetCore` and export traces to an OTLP collector (e.g. Grafana Alloy or the OpenTelemetry Collector in Docker Compose). Instrument the RAG query path so you can see embedding time, vector search time, and LLM streaming time as separate spans.
-- **Structured logging** — replace the default console logger with Serilog + Serilog.Sinks.Console using `JsonFormatter` for log aggregation compatibility.
-- **Prometheus metrics** — expose `/metrics` with request count, query latency percentiles, and ingestion duration.
-
-### Feedback Dashboard
-
-The `feedback` table already stores thumbs up/down per message. Currently, no one can see this data without querying SQLite directly. Build a simple read-only `/admin` page (React, role-gated) showing:
-
-- Top-rated questions and their answers
-- Low-rated questions (where the RAG pipeline failed)
-- Query volume over time
-- Most-cited source files
-
-This data is the primary feedback signal for improving the RAG pipeline.
+- **Health endpoints** — add `/health` (liveness) and `/health/ready` (readiness, checks Ollama reachability) using `Microsoft.AspNetCore.Diagnostics.HealthChecks`. Wire the Docker Compose `healthcheck` to call `/health/ready`.
+- **Async startup ingestion** — move ingestion out of `Program.cs` into a `BackgroundService`. App serves traffic immediately; ingestion runs in the background and exposes status on `/health/ready` or a dedicated `/api/ingest/status`.
+- **SQLite concurrency** — the current `ConversationService` opens a new connection per call. Switch to a singleton connection in WAL mode (`Pooling=True; Journal Mode=WAL`) or add a `SemaphoreSlim(1,1)` guard.
+- **Rate limiting** — add `dotnet-ratelimiting` per-user sliding-window limiter on `/api/chat` to prevent accidental GPU hammering.
 
 ---
 
-## Direction 4 — RAG Quality Improvements
+## Direction 6 — RAG Quality Improvements
 
-The core retrieval pipeline is solid. These improvements increase answer quality, especially as the doc corpus grows.
+The retrieval pipeline is solid. These improvements increase answer quality as the doc corpus grows.
 
 ### Hybrid Search (BM25 + Vector)
 
-Pure cosine similarity on embeddings misses exact keyword matches. Combine vector search with BM25 full-text search (available natively in SQLite via FTS5) and merge results using Reciprocal Rank Fusion (RRF). This typically improves recall on acronym-heavy internal docs significantly.
+Pure cosine similarity misses exact keyword matches. Combine vector search with BM25 full-text search (SQLite FTS5) and merge results with Reciprocal Rank Fusion (RRF). Improves recall on acronym-heavy internal docs significantly.
 
 ### Reranking
 
-After retrieving `TopK * 2` candidates, run a cross-encoder reranker (e.g. `cross-encoder/ms-marco-MiniLM-L-6-v2` via Ollama or a local ONNX model) to re-score and drop the weakest chunks before sending to the LLM. Reduces noise in the LLM context window.
+After retrieving `TopK × 2` candidates, run a cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2` via Ollama or a local ONNX model) to re-score and drop the weakest chunks before sending context to the LLM.
 
-### Query Expansion / HyDE
+### HyDE (Hypothetical Document Embedding)
 
-For short or ambiguous questions, generate a hypothetical answer first (Hypothetical Document Embedding) and embed *that* for retrieval. Improves recall for questions phrased differently from the documentation language.
+For short or ambiguous questions, generate a hypothetical answer first and embed *that* for retrieval. Improves recall when questions are phrased differently from the documentation language.
 
 ### Context Window Management
 
-Long conversation histories grow the prompt unboundedly. Add a sliding-window or summary-based history truncation strategy so older turns are compressed rather than dropped or sent verbatim.
+Add a sliding-window or summary-based history truncation strategy so older turns are compressed rather than dropped or sent verbatim as the conversation grows.
 
 ### Metadata Filters
 
-Add pre-filter support in the query path: allow users to scope search to a specific tag, owner, or last-verified date from the front-end. The `DocumentChunk` model already has `Tags` and `LastVerified` — they just aren't used in filtering today.
+`DocumentChunk` already has `Tags` and `LastVerified`. Wire them as pre-filters in the query path so users can scope search to a specific tag or recency from the front-end.
 
 ---
 
-## Direction 5 — Document Source Connectors
+## Direction 7 — Document Source Connectors
 
-The connector model (ADO → `MarkdownIngestionService`) is clean. Add connectors for:
+The connector model (ADO → `MarkdownIngestionService`) is clean. Add connectors in this order:
 
 | Source | Priority | Notes |
 |--------|----------|-------|
+| **PDF** | High | Many internal docs are PDF; use `PdfPig` to extract text |
 | **GitHub / GitLab** | High | Same PAT + HTTP pattern as ADO; webhook on push events |
-| **PDF** | High | Many internal docs are PDF; use `PdfPig` or `iText` to extract text |
-| **Confluence Cloud** | Medium | REST API; export as Markdown or parse HTML content |
+| **Confluence Cloud** | Medium | REST API; export as Markdown or parse HTML |
 | **SharePoint / OneDrive** | Medium | Microsoft Graph SDK |
-| **Notion** | Low | Notion SDK; good for product/design teams |
+| **Notion** | Low | Notion SDK |
 
-Each connector should implement a `IDocumentSource` interface with `SyncAsync()` returning `IAsyncEnumerable<RawDocument>`, and the ingestion service should embed + upsert from any source uniformly.
-
----
-
-## Direction 6 — Testing
-
-Zero tests is the biggest risk for a team tool. Introduce tests in priority order:
-
-1. **Unit tests for `MarkdownIngestionService`** — chunking logic, front matter parsing, heading breadcrumb generation. Pure functions, no dependencies; fast to write and run.
-2. **Unit tests for `RagQueryService`** — mock `IEmbeddingGenerator` and `VectorStoreCollection`; assert that sources are built correctly and history is injected into messages.
-3. **Integration tests for `ConversationService`** — spin up an in-memory SQLite DB; test create, get, delete, feedback, and concurrency.
-4. **HTTP integration tests** — use `WebApplicationFactory<Program>` with a test Ollama stub to test the full chat SSE streaming endpoint, auth enforcement (401 on unauthenticated), and webhook signature validation.
-
-Use **xUnit** + **Moq** (or `NSubstitute`) + **FluentAssertions**. Add a `src/RagAssistant.Tests/` project.
+Each connector should implement `IDocumentSource` with `SyncAsync()` returning `IAsyncEnumerable<RawDocument>`.
 
 ---
 
-## Direction 7 — GitHub / OSS Readiness
+## Direction 8 — Testing
 
-If the goal is to share this publicly, the repo needs:
+Zero tests is the biggest regression risk as the codebase grows. Add in priority order:
 
-- **`LICENSE`** — MIT is the lowest-friction choice for a dev tool
-- **`CONTRIBUTING.md`** — how to set up the dev environment, coding conventions, PR process
-- **GitHub Actions CI** — `dotnet build` + `dotnet test` + `npm run build` on every PR; Docker build test on main
-- **Issue templates** — bug report and feature request templates in `.github/ISSUE_TEMPLATE/`
-- **Social preview image** — a screenshot or demo GIF in the README makes a huge difference on GitHub and LinkedIn
-- **Rename or align branding** — the title `"Internal Docs Assistant"` is hardcoded in `index.html`; make it configurable via `appsettings.json` (e.g. `App:Name`) so deployers can brand their instance
+1. **Unit tests for `MarkdownIngestionService`** — chunking logic, front-matter parsing, heading breadcrumbs. Pure functions, no deps; fast to write.
+2. **Unit tests for `RagQueryService`** — mock `IEmbeddingGenerator` and `VectorStoreCollection`; assert source building and history injection.
+3. **Integration tests for `ConversationService`** — in-memory SQLite; test create/get/delete/feedback and concurrency.
+4. **HTTP integration tests** — `WebApplicationFactory<Program>` with a stubbed Ollama; test SSE streaming, 401 on unauthenticated requests, and webhook signature validation.
+
+Stack: **xUnit** + **NSubstitute** + **FluentAssertions** in a `src/RagAssistant.Tests/` project.
+
+---
+
+## Direction 9 — GitHub / OSS Readiness
+
+Required before publishing:
+
+- **`LICENSE`** — MIT
+- **`CONTRIBUTING.md`** — dev environment setup, coding conventions, PR process
+- **GitHub Actions CI** — `dotnet build` + `dotnet test` + `npm run build` on every PR; Docker build test on `main`
+- **Issue templates** — bug report and feature request in `.github/ISSUE_TEMPLATE/`
+- **Configurable app name** — `"Internal Docs Assistant"` is hardcoded in `index.html`; make it `App:Name` in `appsettings.json`
 - **Published Docker image** — push to GitHub Container Registry (`ghcr.io`) on release tags so others can `docker compose up` without building locally
+- **Social preview** — a screenshot or short demo GIF in the README
 
 ---
 
 ## Priority Summary
 
-| Priority | Direction | Why |
-|----------|-----------|-----|
-| 1 | React UI | Biggest quality-of-life delta; unblocks Markdown rendering |
-| 2 | Security hardening | Required before giving real team access |
-| 3 | Health endpoints + async startup | Required for reliable container operation |
-| 4 | Tests | Guards against regressions as the codebase grows |
-| 5 | Observability | Needed once real users are on it |
-| 6 | Hybrid search + reranking | Measurable answer quality improvement |
-| 7 | OSS readiness | Required before GitHub/LinkedIn publish |
-| 8 | Additional connectors | Scope creep risk — add only what the team actually uses |
+| # | Direction | Status | Why now |
+|---|---|---|---|
+| 1 | ~~React UI~~ | **Done** | — |
+| 2 | Observability & Audit | **Next** | Can't improve what you can't see; Aspire Dashboard is low-effort, high-value |
+| 3 | Environment separation | **Next** | Unblocks clean production config and removes shell-script hacks |
+| 4 | UI polish | After envs | Improves perceived quality for demos and team rollout |
+| 5 | Security hardening | With env work | Shares config layer with Direction 3; no standalone effort |
+| 6 | Reliability | Before team use | Health checks + async ingestion + rate limits |
+| 7 | RAG quality | After team use | Real usage data drives what to fix first |
+| 8 | Document connectors | As needed | Add only what the team actually uses |
+| 9 | Testing | Before OSS | Prevents regressions when contributors join |
+| 10 | OSS readiness | Last | Polish and publish once the product is stable |

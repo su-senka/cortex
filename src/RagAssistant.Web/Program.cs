@@ -1,14 +1,18 @@
 using System.Security.Claims;
-using Microsoft.AspNetCore.DataProtection;
-using Microsoft.AspNetCore.HttpOverrides;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.VectorData;
 using Microsoft.SemanticKernel.Connectors.SqliteVec;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using OllamaSharp;
 using RagAssistant.Core;
 using RagAssistant.Core.Conversations;
@@ -47,6 +51,29 @@ vectorDbPath = Path.IsPathRooted(vectorDbPath)
     : Path.Combine(builder.Environment.ContentRootPath, vectorDbPath);
 
 var vectorDbConnectionString = $"Data Source={vectorDbPath}";
+
+// ── Observability ─────────────────────────────────────────────────────────────
+// Structured JSON console logging — useful in Docker where logs are collected
+// by the container runtime and forwarded to a log aggregator.
+builder.Logging.ClearProviders();
+builder.Logging.AddJsonConsole(o => o.TimestampFormat = "O");
+
+// OpenTelemetry: traces + metrics + logs exported via OTLP to the Aspire Dashboard
+// (or any OTLP-compatible collector). The endpoint is read from the standard
+// OTEL_EXPORTER_OTLP_ENDPOINT environment variable; if unset the SDK defaults to
+// http://localhost:4317 and silently drops data when nothing is listening.
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(r => r.AddService(Telemetry.ServiceName))
+    .WithTracing(t => t
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddSource(Telemetry.ServiceName)
+        .AddOtlpExporter())
+    .WithMetrics(m => m
+        .AddAspNetCoreInstrumentation()
+        .AddMeter(Telemetry.ServiceName)
+        .AddOtlpExporter())
+    .WithLogging(l => l.AddOtlpExporter());
 
 // ── Forwarded headers (reverse-proxy / Codespaces TLS termination) ────────────
 // Reads X-Forwarded-Proto and X-Forwarded-Host so ASP.NET builds redirect_uri
@@ -489,6 +516,15 @@ app.MapPost("/api/feedback", async (
     await conversations.SaveFeedbackAsync(req.MessageId, req.Rating, ct);
     return Results.NoContent();
 }).RequireAuthorization();
+
+// GET /api/admin/feedback — aggregated feedback stats. Admin only.
+app.MapGet("/api/admin/feedback", async (
+    ConversationService conversations,
+    CancellationToken ct) =>
+{
+    var audit = await conversations.GetFeedbackAuditAsync(ct);
+    return Results.Ok(audit);
+}).RequireAuthorization("Admin");
 
 app.Run();
 

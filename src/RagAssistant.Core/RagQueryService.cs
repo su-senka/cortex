@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
@@ -40,14 +41,29 @@ public sealed class RagQueryService(
         IReadOnlyList<ChatMessage>? history = null,
         CancellationToken ct = default)
     {
+        using var queryActivity = Telemetry.ActivitySource.StartActivity("rag.query");
+        queryActivity?.SetTag("rag.question_length", question.Length);
+
         // Step 1: embed the question.
-        var embeddings = await embedder.GenerateAsync([question], cancellationToken: ct);
-        var queryVector = embeddings[0].Vector;
+        ReadOnlyMemory<float> queryVector;
+        using (Telemetry.ActivitySource.StartActivity("rag.embed"))
+        {
+            var sw = Stopwatch.GetTimestamp();
+            var embeddings = await embedder.GenerateAsync([question], cancellationToken: ct);
+            queryVector = embeddings[0].Vector;
+            Telemetry.EmbeddingDurationMs.Record(Stopwatch.GetElapsedTime(sw).TotalMilliseconds);
+        }
 
         // Step 2: search the vector store.
         var hits = new List<VectorSearchResult<DocumentChunk>>();
-        await foreach (var hit in collection.SearchAsync(queryVector, _options.TopK, cancellationToken: ct))
-            hits.Add(hit);
+        using (var searchActivity = Telemetry.ActivitySource.StartActivity("rag.vector_search"))
+        {
+            var sw = Stopwatch.GetTimestamp();
+            await foreach (var hit in collection.SearchAsync(queryVector, _options.TopK, cancellationToken: ct))
+                hits.Add(hit);
+            Telemetry.VectorSearchDurationMs.Record(Stopwatch.GetElapsedTime(sw).TotalMilliseconds);
+            searchActivity?.SetTag("rag.results_count", hits.Count);
+        }
 
         // Step 3: build source list from search results — deterministic, not derived from LLM output.
         var sources = hits
@@ -59,6 +75,9 @@ public sealed class RagQueryService(
                 h.Score ?? 0,
                 h.Record.Content))
             .ToList();
+
+        queryActivity?.SetTag("rag.sources_found", sources.Count);
+        Telemetry.QueriesTotal.Add(1);
 
         // Step 4: compose the prompt and return a lazy stream for the LLM response.
         // Sources are available immediately; the answer stream is only consumed by the caller.

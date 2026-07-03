@@ -172,6 +172,64 @@ public sealed class ConversationService(string connectionString, ILogger<Convers
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task<FeedbackAudit> GetFeedbackAuditAsync(CancellationToken ct = default)
+    {
+        using var conn = Open();
+        await conn.OpenAsync(ct);
+
+        // Totals
+        int thumbsUp = 0, thumbsDown = 0;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT rating, COUNT(*) FROM feedback GROUP BY rating";
+            using var r = await cmd.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct))
+            {
+                if (r.GetInt32(0) == 1) thumbsUp = r.GetInt32(1);
+                else thumbsDown = r.GetInt32(1);
+            }
+        }
+
+        // Recent rated exchanges: conversation title as question proxy + answer snippet
+        var recent = new List<RatedExchange>();
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT f.rating, f.created_at, c.title, substr(m.content, 1, 300)
+                FROM feedback f
+                JOIN messages m ON m.id = f.message_id
+                JOIN conversations c ON c.id = m.conversation_id
+                ORDER BY f.created_at DESC
+                LIMIT 50
+                """;
+            using var r = await cmd.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct))
+                recent.Add(new RatedExchange(
+                    r.GetInt32(0),
+                    DateTimeOffset.Parse(r.GetString(1)),
+                    r.GetString(2),
+                    r.GetString(3)));
+        }
+
+        // Daily query volume for the last 30 days
+        var daily = new List<DailyVolume>();
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT date(created_at) as day, COUNT(*) as cnt
+                FROM conversations
+                WHERE created_at >= datetime('now', '-30 days')
+                GROUP BY day
+                ORDER BY day
+                """;
+            using var r = await cmd.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct))
+                daily.Add(new DailyVolume(r.GetString(0), r.GetInt32(1)));
+        }
+
+        return new FeedbackAudit(thumbsUp, thumbsDown, recent, daily);
+    }
+
     private static async Task InsertMessageAsync(
         SqliteConnection conn, SqliteTransaction tx,
         string conversationId, string role, string id, string content,

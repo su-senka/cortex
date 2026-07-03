@@ -30,6 +30,8 @@ public sealed class MarkdownIngestionService(
     /// </summary>
     public async Task IngestAllAsync(CancellationToken ct = default)
     {
+        using var activity = Telemetry.ActivitySource.StartActivity("rag.ingest");
+
         await collection.EnsureCollectionExistsAsync(ct);
 
         var docsFolder = Path.GetFullPath(_options.DocsFolder);
@@ -46,6 +48,8 @@ public sealed class MarkdownIngestionService(
 
         var mdFiles = Directory.GetFiles(docsFolder, "*.md", SearchOption.AllDirectories);
         var currentRelativePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var totalUpserted = 0;
+        var totalDeleted = 0;
 
         foreach (var absolutePath in mdFiles)
         {
@@ -54,7 +58,7 @@ public sealed class MarkdownIngestionService(
 
             try
             {
-                await IngestFileAsync(absolutePath, relativePath, metadata, ct);
+                totalUpserted += await IngestFileAsync(absolutePath, relativePath, metadata, ct);
             }
             catch (Exception ex)
             {
@@ -71,13 +75,24 @@ public sealed class MarkdownIngestionService(
             var staleKeys = Enumerable.Range(0, oldChunkCount).Select(i => BuildKey(path, i));
             await collection.DeleteAsync(staleKeys, ct);
             metadata.Remove(path);
+            totalDeleted += oldChunkCount;
         }
 
         await SaveMetadataAsync(metadataPath, metadata, ct);
-        logger.LogInformation("Ingestion complete — {Count} file(s) processed.", mdFiles.Length);
+
+        activity?.SetTag("rag.docs_processed", mdFiles.Length);
+        activity?.SetTag("rag.chunks_upserted", totalUpserted);
+        activity?.SetTag("rag.chunks_deleted", totalDeleted);
+        Telemetry.IngestionsTotal.Add(1);
+        Telemetry.ChunksUpserted.Add(totalUpserted);
+        Telemetry.ChunksDeleted.Add(totalDeleted);
+
+        logger.LogInformation(
+            "Ingestion complete — {Docs} file(s), {Upserted} chunk(s) upserted, {Deleted} deleted.",
+            mdFiles.Length, totalUpserted, totalDeleted);
     }
 
-    private async Task IngestFileAsync(
+    private async Task<int> IngestFileAsync(
         string absolutePath,
         string relativePath,
         Dictionary<string, int> metadata,
@@ -92,7 +107,7 @@ public sealed class MarkdownIngestionService(
         if (chunks.Count == 0)
         {
             logger.LogWarning("No content found in {File}, skipping.", relativePath);
-            return;
+            return 0;
         }
 
         // Embed all chunk texts in one batch to avoid N individual round-trips to Ollama.
@@ -113,6 +128,7 @@ public sealed class MarkdownIngestionService(
         }
 
         metadata[relativePath] = chunks.Count;
+        return chunks.Count;
     }
 
     // ── Chunking ──────────────────────────────────────────────────────────────────

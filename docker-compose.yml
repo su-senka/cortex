@@ -2,6 +2,15 @@ name: cortex
 
 services:
 
+  aspire-dashboard:
+    image: mcr.microsoft.com/dotnet/aspire-dashboard:latest
+    ports:
+      - "18888:18888"   # Dashboard UI  →  http://localhost:18888
+      - "18889:18889"   # OTLP gRPC receiver
+    environment:
+      DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS: "true"
+    restart: unless-stopped
+
   app:
     build: .
     image: cortex-rag:latest
@@ -30,11 +39,15 @@ services:
       AzureDevOps__Branch: "main"
       AzureDevOps__PersonalAccessToken: ""
       AzureDevOps__WebhookSecret: ""
+      OTEL_SERVICE_NAME: cortex
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://aspire-dashboard:18889
     depends_on:
       model-init:
         condition: service_completed_successfully
       keycloak:
         condition: service_healthy
+      aspire-dashboard:
+        condition: service_started
     restart: unless-stopped
 
   model-init:
