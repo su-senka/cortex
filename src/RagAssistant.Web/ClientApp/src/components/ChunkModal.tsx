@@ -40,7 +40,7 @@ function HighlightedText({ text, sentences }: { text: string; sentences: string[
     <>
       {parts.map((part, i) =>
         i % 2 === 1 ? (
-          <mark key={i} className="bg-yellow-200 rounded-sm px-px">
+          <mark key={i} className="bg-yellow-200 dark:bg-yellow-500/40 dark:text-inherit rounded-sm px-px">
             {part}
           </mark>
         ) : (
@@ -72,30 +72,31 @@ export function ChunkModal({ source, onClose }: Props) {
     .join('  ·  ');
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/45" onClick={onClose} />
-      <div className="relative bg-white rounded-xl w-[min(700px,92vw)] max-h-[82vh] flex flex-col shadow-2xl">
-        <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-gray-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-label={source.title || source.sourceFile}>
+      <div className="absolute inset-0 bg-black/45 dark:bg-black/65" onClick={onClose} />
+      <div className="relative bg-white dark:bg-gray-900 dark:border dark:border-gray-700 rounded-xl w-[min(700px,92vw)] max-h-[82vh] flex flex-col shadow-2xl">
+        <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-gray-200 dark:border-gray-800">
           <div className="flex-1 min-w-0">
             <div className="font-semibold text-[0.9375rem] truncate">{source.title || source.sourceFile}</div>
-            <div className="text-[0.8rem] text-gray-500 mt-0.5">{subtitle}</div>
+            <div className="text-[0.8rem] text-gray-500 dark:text-gray-400 mt-0.5">{subtitle}</div>
           </div>
           <button
             onClick={onClose}
-            className="bg-transparent border-none cursor-pointer text-lg text-gray-400 hover:text-gray-900 leading-none shrink-0"
+            aria-label="Close"
+            className="bg-transparent border-none cursor-pointer text-lg text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 leading-none shrink-0"
           >
             ✕
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          <pre className="whitespace-pre-wrap font-[inherit] text-sm leading-relaxed text-gray-700">
+          <pre className="whitespace-pre-wrap font-[inherit] text-sm leading-relaxed text-gray-700 dark:text-gray-300">
             <HighlightedText text={source.chunkText ?? ''} sentences={sentences} />
           </pre>
         </div>
 
         {sentences.length > 0 && (
-          <div className="text-xs text-gray-400 px-5 py-2 border-t border-gray-100">
+          <div className="text-xs text-gray-400 dark:text-gray-500 px-5 py-2 border-t border-gray-100 dark:border-gray-800">
             Highlighted words were extracted from the answer that cited this source.
           </div>
         )}

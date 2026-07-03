@@ -9,17 +9,21 @@ fi
 APP_URL="https://${CODESPACE_NAME}-8080.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}"
 KC_URL="https://${CODESPACE_NAME}-8180.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}"
 
-# Write .env so docker-compose.codespaces.yml can substitute ${KEYCLOAK_PUBLIC_URL}
-printf 'KEYCLOAK_PUBLIC_URL=%s\n' "$KC_URL" > .env
+# Upsert KEYCLOAK_PUBLIC_URL into .env without clobbering other variables
+# (secrets from .env.example may live there too).
+touch .env
+grep -v '^KEYCLOAK_PUBLIC_URL=' .env > .env.tmp || true
+printf 'KEYCLOAK_PUBLIC_URL=%s\n' "$KC_URL" >> .env.tmp
+mv .env.tmp .env
 
-docker compose -f docker-compose.yml -f docker-compose.codespaces.yml up -d --build "$@"
+docker compose --profile codespaces up -d --build "$@"
 
 # Wait for Keycloak before updating the client (model-init may still be running in parallel)
 echo "Waiting for Keycloak..."
 until docker exec cortex-keycloak-1 \
   /opt/keycloak/bin/kcadm.sh config credentials \
   --server http://localhost:8080 --realm master \
-  --user admin --password admin 2>/dev/null; do
+  --user admin --password "${KEYCLOAK_ADMIN_PASSWORD:-admin}" 2>/dev/null; do
   printf '.'
   sleep 3
 done

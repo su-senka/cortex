@@ -49,18 +49,22 @@ Both models are configurable in `appsettings.json`. Any Ollama-compatible model 
 
 ---
 
-## 2. Running Locally
+## 2. Running
+
+The app ships as a Docker Compose stack (app + Ollama + Keycloak + Aspire Dashboard).
+One compose file covers three environments, selected by profile:
 
 ```bash
-git clone https://your-server/RagAssistant.git
-cd RagAssistant
-
-dotnet run --project src/RagAssistant.Web
+./start-local.sh          # = docker compose --profile local up -d --build
+./start-codespaces.sh     # GitHub Codespaces (also registers the session's redirect URIs)
+docker compose --profile production up -d --build   # behind the nginx TLS proxy
 ```
 
-Open **http://localhost:5000** in your browser.
+Open **http://localhost:8080** (local profile). Keycloak admin is at http://localhost:8180, and the Aspire Dashboard (traces/logs/metrics) at http://localhost:18888.
 
-On startup, the app automatically indexes the `sample-docs/` folder. Ask something like:
+For backend-only development you can still run bare-metal (`dotnet run --project src/RagAssistant.Web`), but Ollama and Keycloak must be reachable — easiest is to start the compose stack and stop just the app container.
+
+On startup, the app indexes the docs folder in the background — it serves traffic immediately, and `GET /api/ingest/status` (or `/health/ready`) reports ingestion progress. Ask something like:
 - "How do I connect to the VPN from macOS?"
 - "What are the steps to generate a TLS certificate?"
 - "What is a P1 incident?"
@@ -97,23 +101,88 @@ All fields are optional — the file name is used as the title if none is provid
 
 ## 3. Configuration Reference
 
-All settings are in `src/RagAssistant.Web/appsettings.json`:
+### Config layering
+
+Settings resolve in the standard ASP.NET order — later layers override earlier ones:
+
+| Layer | Purpose |
+|-------|---------|
+| `appsettings.json` | Shared defaults; no secrets, no environment hostnames |
+| `appsettings.Development.json` | Local dev — relaxed OIDC (`RequireHttpsMetadata=false`, `ValidateIssuer=false`) |
+| `appsettings.Codespaces.json` | Codespaces — same relaxations (TLS proxy in front, internal HTTP Keycloak) |
+| `appsettings.Production.json` | Strict OIDC validation (`RequireHttpsMetadata`, `ValidateIssuer`, `ValidateAudience` all `true`) |
+| Environment variables | Deploy-time wiring (hostnames) and secrets, using the `__` separator |
+
+Each compose profile sets `ASPNETCORE_ENVIRONMENT` (`Development` / `Codespaces` / `Production`) so the right layer applies automatically.
+
+### App settings
 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `Ollama:BaseUrl` | `http://localhost:11434` | Ollama API URL |
 | `Ollama:ChatModel` | `qwen2.5:7b-instruct-q4_K_M` | Model for answering questions |
 | `Ollama:EmbeddingModel` | `nomic-embed-text` | Model for generating embeddings |
-| `Rag:DocsFolder` | `../../sample-docs` | Folder containing `.md` files |
+| `Rag:DocsFolder` | `../../docs` | Folder containing `.md` files |
 | `Rag:VectorDbPath` | `rag_store.db` | SQLite vector database file (relative to app ContentRoot) |
 | `Rag:ChunkSize` | `1500` | Max characters per chunk |
 | `Rag:ChunkOverlap` | `150` | Characters of overlap between consecutive chunks |
 | `Rag:TopK` | `5` | Number of chunks retrieved per query |
+| `RateLimiting:ChatPermitLimit` | `20` | Max `/api/chat` requests per user per window |
+| `RateLimiting:ChatWindowSeconds` | `60` | Sliding-window length for the chat rate limit |
+| `Oidc:Authority` | — | Keycloak realm URL used for discovery and token validation |
+| `Oidc:PublicOrigin` | — | Browser-facing Keycloak origin when it differs from `Authority` |
+| `Oidc:ClientId` / `Oidc:ClientSecret` | — | OIDC client credentials |
+| `Oidc:AdminRole` | `cortex-admin` | Keycloak realm role required for admin endpoints |
 
-Environment variables override `appsettings.json` using the standard `__` separator:
-```bash
-Rag__DocsFolder=/var/docs Ollama__ChatModel=llama3.2 dotnet run ...
+### Secrets and host-level variables (`.env`)
+
+Compose reads secrets from a git-ignored `.env` file — copy `.env.example` and fill in. Never put secrets in `appsettings.json` or the compose file.
+
+| Variable | Used by | Description |
+|----------|---------|-------------|
+| `KEYCLOAK_ADMIN_PASSWORD` | keycloak | Admin console password (default `admin`) |
+| `OIDC_CLIENT_SECRET` | app | Secret of the `cortex-app` client |
+| `OIDC_AUTHORITY` | app (production) | HTTPS Keycloak realm URL |
+| `OIDC_PUBLIC_ORIGIN` | app (production) | Browser-facing Keycloak origin, if different |
+| `ADO_BASE_URL` / `ADO_PROJECT` / `ADO_REPOSITORY` / `ADO_PATH` / `ADO_BRANCH` | app | Azure DevOps connector (leave empty to ingest `./docs`) |
+| `ADO_PAT` | app | Azure DevOps personal access token |
+| `ADO_WEBHOOK_SECRET` | app | HMAC secret for `/api/ado-webhook` |
+| `KEYCLOAK_PUBLIC_URL` | app (codespaces) | Written automatically by `start-codespaces.sh` |
+
+For overrides that shouldn't be committed (extra ports, different volumes, more env vars), use a `docker-compose.override.yml` — compose merges it automatically:
+
+```yaml
+# docker-compose.override.yml (git-ignore it if it contains secrets)
+services:
+  app-local:
+    environment:
+      Ollama__ChatModel: llama3.2
+      Rag__TopK: "8"
 ```
+
+### Operational endpoints
+
+| Endpoint | Auth | Description |
+|----------|------|-------------|
+| `GET /health` | none | Liveness — process is up |
+| `GET /health/ready` | none | Readiness — Ollama reachability + ingestion state (JSON) |
+| `GET /api/ingest/status` | user | State of the background startup ingestion |
+| `POST /api/ingest` | admin | Re-scan and re-index the docs folder |
+| `GET /api/admin/feedback` | admin | Aggregated thumbs-up/down stats |
+
+---
+
+## 3a. Production Profile (Docker + nginx TLS)
+
+The `production` profile adds an nginx reverse proxy that terminates TLS on port 443 and forwards to the app (which has no published host port).
+
+```bash
+./scripts/gen-certs.sh my-host.example.com   # self-signed cert for LAN/intranet use
+cp .env.example .env                          # set OIDC_AUTHORITY, OIDC_CLIENT_SECRET, ...
+docker compose --profile production up -d --build
+```
+
+Production enforces `RequireHttpsMetadata=true`, so `OIDC_AUTHORITY` must be an **HTTPS** Keycloak URL whose certificate the app container trusts. For public deployments replace the self-signed cert with a real one (mount into `nginx/certs/`, or add a certbot sidecar).
 
 ---
 

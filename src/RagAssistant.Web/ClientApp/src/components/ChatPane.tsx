@@ -6,10 +6,12 @@ import type { ChatMessage, Source } from '../types';
 import { MessageBubble } from './MessageBubble';
 import { InputBar } from './InputBar';
 
-const WELCOME: ChatMessage = {
-  role: 'assistant',
-  content: 'Hello! Ask me anything about the internal documentation.',
-};
+const SUGGESTIONS = [
+  'How do I connect to the VPN from macOS?',
+  'What are the steps to generate a TLS certificate?',
+  'What is a P1 incident?',
+  "What's on the onboarding checklist for new engineers?",
+];
 
 function extractCitations(text: string): Citations {
   const cits: Citations = {};
@@ -28,9 +30,13 @@ export function ChatPane() {
   const qc = useQueryClient();
   const { activeConversationId, setActiveConversation, setSources } = useAppStore();
 
-  const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const [showJump, setShowJump] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // Whether the user is at (or near) the bottom — auto-scroll only then, so
+  // scrolling up to re-read mid-stream isn't fought by the incoming tokens.
+  const atBottomRef = useRef(true);
   const abortRef = useRef<AbortController | null>(null);
   // Conversations we just finished streaming — skip the API fetch for those,
   // we already have the complete messages in state.
@@ -39,7 +45,7 @@ export function ChatPane() {
   // Load messages when active conversation changes.
   useEffect(() => {
     if (!activeConversationId) {
-      setMessages([WELCOME]);
+      setMessages([]);
       return;
     }
     if (justStreamedRef.current.has(activeConversationId)) {
@@ -49,6 +55,7 @@ export function ChatPane() {
     let cancelled = false;
     api.messages(activeConversationId).then((msgs) => {
       if (cancelled) return;
+      atBottomRef.current = true;
       setMessages(
         msgs.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
       );
@@ -57,8 +64,25 @@ export function ChatPane() {
   }, [activeConversationId]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (atBottomRef.current) {
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+      setShowJump(false);
+    }
   }, [messages]);
+
+  function handleScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    atBottomRef.current = nearBottom;
+    setShowJump(!nearBottom);
+  }
+
+  function jumpToBottom() {
+    atBottomRef.current = true;
+    setShowJump(false);
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  }
 
   const send = useCallback(async (question: string) => {
     if (busy) return;
@@ -68,6 +92,7 @@ export function ChatPane() {
     abortRef.current = ac;
 
     setBusy(true);
+    atBottomRef.current = true;
 
     // Append user message + placeholder assistant message.
     setMessages((prev) => [
@@ -154,13 +179,54 @@ export function ChatPane() {
   }, [busy, activeConversationId, setActiveConversation, setSources, qc]);
 
   return (
-    <main className="flex flex-col flex-1 min-w-0">
-      <div className="flex-1 overflow-y-auto px-6 py-5 flex flex-col gap-4">
-        {messages.map((msg, i) => (
-          <MessageBubble key={i} message={msg} />
-        ))}
-        <div ref={bottomRef} />
-      </div>
+    <main className="relative flex flex-col flex-1 min-w-0">
+      {messages.length === 0 ? (
+        <div className="flex-1 flex flex-col items-center justify-center gap-6 px-6">
+          <div className="text-center">
+            <h2 className="text-xl font-semibold text-gray-700 dark:text-gray-200">
+              What do you want to know?
+            </h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1.5">
+              Answers come straight from the internal documentation, with citations.
+            </p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 w-full max-w-xl">
+            {SUGGESTIONS.map((s) => (
+              <button
+                key={s}
+                onClick={() => send(s)}
+                className="text-left text-sm text-gray-700 bg-white border border-gray-200 rounded-xl px-4 py-3 cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors dark:bg-gray-900 dark:border-gray-700 dark:text-gray-300 dark:hover:border-blue-500 dark:hover:bg-gray-800"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          aria-live="polite"
+          className="flex-1 overflow-y-auto px-4 sm:px-6 py-5"
+        >
+          <div className="max-w-3xl mx-auto flex flex-col gap-5">
+            {messages.map((msg, i) => (
+              <MessageBubble key={i} message={msg} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {showJump && (
+        <button
+          onClick={jumpToBottom}
+          aria-label="Scroll to bottom"
+          className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-white border border-gray-300 text-gray-600 rounded-full w-9 h-9 shadow-md cursor-pointer text-lg leading-none hover:bg-gray-50 dark:bg-gray-800 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+        >
+          ↓
+        </button>
+      )}
+
       <InputBar onSend={send} busy={busy} />
     </main>
   );

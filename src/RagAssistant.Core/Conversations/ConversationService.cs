@@ -9,6 +9,18 @@ public sealed class ConversationService(string connectionString, ILogger<Convers
     {
         using var conn = Open();
         await conn.OpenAsync(ct);
+
+        // WAL allows concurrent readers while a write is in progress. The setting is
+        // persisted in the database file, so the vector-store connections that share
+        // this file get it too. Combined with Microsoft.Data.Sqlite's default
+        // connection pooling and busy timeout, this removes "database is locked"
+        // errors when chat, feedback, and ingestion touch the DB at the same time.
+        using (var pragma = conn.CreateCommand())
+        {
+            pragma.CommandText = "PRAGMA journal_mode=WAL;";
+            await pragma.ExecuteScalarAsync(ct);
+        }
+
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             CREATE TABLE IF NOT EXISTS conversations (

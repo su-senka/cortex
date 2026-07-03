@@ -1,6 +1,113 @@
 name: cortex
 
+# One compose file, three environments selected by profile:
+#
+#   docker compose --profile local up -d --build         (or ./start-local.sh)
+#   docker compose --profile codespaces up -d --build    (or ./start-codespaces.sh)
+#   docker compose --profile production up -d --build
+#
+# Environment-specific OIDC validation lives in appsettings.{Environment}.json —
+# compose only wires hostnames, secrets (from .env, see .env.example), and the
+# ASPNETCORE_ENVIRONMENT that selects the config layer.
+
+x-app-base: &app-base
+  build: .
+  image: cortex-rag:latest
+  volumes:
+    - ./docs:/docs
+    - ado-cache:/docs/ado-sync
+    - rag-data:/data
+  networks:
+    default:
+      aliases:
+        - app   # stable DNS name regardless of which app-* profile is running
+  healthcheck:
+    # aspnet images ship no curl/wget; bash /dev/tcp + grep does the job.
+    test: ['CMD', 'bash', '-c', 'exec 3<>/dev/tcp/localhost/8080 && printf ''GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n'' >&3 && grep -q " 200 " <&3']
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 30s
+  depends_on:
+    model-init:
+      condition: service_completed_successfully
+    keycloak:
+      condition: service_healthy
+    aspire-dashboard:
+      condition: service_started
+  restart: unless-stopped
+
+x-app-env: &app-env
+  Ollama__BaseUrl: http://ollama:11434
+  Rag__VectorDbPath: /data/rag_store.db
+  Rag__DocsFolder: /docs
+  Oidc__Authority: http://keycloak:8080/realms/cortex
+  Oidc__ClientId: cortex-app
+  Oidc__ClientSecret: ${OIDC_CLIENT_SECRET:-cortex-secret}
+  AzureDevOps__BaseUrl: ${ADO_BASE_URL:-}
+  AzureDevOps__Project: ${ADO_PROJECT:-}
+  AzureDevOps__Repository: ${ADO_REPOSITORY:-}
+  AzureDevOps__Path: ${ADO_PATH:-/}
+  AzureDevOps__Branch: ${ADO_BRANCH:-main}
+  AzureDevOps__PersonalAccessToken: ${ADO_PAT:-}
+  AzureDevOps__WebhookSecret: ${ADO_WEBHOOK_SECRET:-}
+  OTEL_SERVICE_NAME: cortex
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://aspire-dashboard:18889
+
 services:
+
+  # ── App (one variant per environment) ───────────────────────────────────────
+
+  app-local:
+    <<: *app-base
+    profiles: [local]
+    ports:
+      - "8080:8080"
+    environment:
+      <<: *app-env
+      ASPNETCORE_ENVIRONMENT: Development
+      Oidc__PublicOrigin: http://localhost:8180
+
+  app-codespaces:
+    <<: *app-base
+    profiles: [codespaces]
+    ports:
+      - "8080:8080"
+    environment:
+      <<: *app-env
+      ASPNETCORE_ENVIRONMENT: Codespaces
+      Oidc__PublicOrigin: ${KEYCLOAK_PUBLIC_URL:-}
+
+  app-production:
+    <<: *app-base
+    profiles: [production]
+    # No host port — traffic enters through the nginx TLS proxy only.
+    environment:
+      <<: *app-env
+      ASPNETCORE_ENVIRONMENT: Production
+      # Production requires an HTTPS Keycloak (RequireHttpsMetadata=true) —
+      # set OIDC_AUTHORITY in .env to your HTTPS Keycloak realm URL.
+      Oidc__Authority: ${OIDC_AUTHORITY:-}
+      Oidc__PublicOrigin: ${OIDC_PUBLIC_ORIGIN:-}
+
+  # ── Reverse proxy (production only) ─────────────────────────────────────────
+  # Terminates TLS with certs from ./nginx/certs (generate self-signed ones with
+  # scripts/gen-certs.sh, or mount real certs / add a certbot sidecar).
+
+  nginx:
+    image: nginx:1.27-alpine
+    profiles: [production]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - app-production
+    restart: unless-stopped
+
+  # ── Shared infrastructure (all profiles) ────────────────────────────────────
 
   aspire-dashboard:
     image: mcr.microsoft.com/dotnet/aspire-dashboard:latest
@@ -9,45 +116,6 @@ services:
       - "18889:18889"   # OTLP gRPC receiver
     environment:
       DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS: "true"
-    restart: unless-stopped
-
-  app:
-    build: .
-    image: cortex-rag:latest
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./docs:/docs
-      - ado-cache:/docs/ado-sync
-      - rag-data:/data
-    environment:
-      ASPNETCORE_ENVIRONMENT: Production
-      Ollama__BaseUrl: http://ollama:11434
-      Rag__VectorDbPath: /data/rag_store.db
-      Rag__DocsFolder: /docs
-      Oidc__Authority: http://keycloak:8080/realms/cortex
-      Oidc__ClientId: cortex-app
-      Oidc__ClientSecret: cortex-secret
-      Oidc__RequireHttpsMetadata: "false"
-      Oidc__ValidateIssuer: "false"
-      Oidc__ValidateAudience: "true"
-      Oidc__ValidAudiences__0: "cortex-app"
-      AzureDevOps__BaseUrl: ""
-      AzureDevOps__Project: ""
-      AzureDevOps__Repository: ""
-      AzureDevOps__Path: "/"
-      AzureDevOps__Branch: "main"
-      AzureDevOps__PersonalAccessToken: ""
-      AzureDevOps__WebhookSecret: ""
-      OTEL_SERVICE_NAME: cortex
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://aspire-dashboard:18889
-    depends_on:
-      model-init:
-        condition: service_completed_successfully
-      keycloak:
-        condition: service_healthy
-      aspire-dashboard:
-        condition: service_started
     restart: unless-stopped
 
   model-init:
@@ -71,9 +139,12 @@ services:
       - "8180:8080"
     environment:
       KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
       KC_HOSTNAME_STRICT: "false"
       KC_HTTP_ENABLED: "true"
+      # Needed in Codespaces (TLS-terminating proxy in front of Keycloak);
+      # harmless for local dev, where nothing sends forwarded headers.
+      KC_PROXY_HEADERS: xforwarded
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro
     healthcheck:

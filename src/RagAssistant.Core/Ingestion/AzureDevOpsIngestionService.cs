@@ -72,6 +72,10 @@ public sealed class AzureDevOpsIngestionService(
     /// Validates the X-Hub-Signature HMAC-SHA1 header that ADO Server attaches when a
     /// WebhookSecret is configured on the subscription. Returns true if no secret is
     /// configured (open webhook) or if the signature matches.
+    /// SHA-1 is the only algorithm ADO Server supports for webhook signatures. HMAC-SHA1
+    /// is not affected by SHA-1 collision attacks (they require chosen prefixes, which
+    /// HMAC's keyed construction prevents), so this is acceptable — but it cannot be
+    /// upgraded until ADO does.
     /// </summary>
     public bool ValidateWebhookSignature(string payload, string signatureHeader)
     {

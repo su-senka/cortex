@@ -1,12 +1,16 @@
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.VectorData;
 using Microsoft.SemanticKernel.Connectors.SqliteVec;
 using OpenTelemetry.Logs;
@@ -18,6 +22,8 @@ using RagAssistant.Core;
 using RagAssistant.Core.Conversations;
 using RagAssistant.Core.Ingestion;
 using RagAssistant.Core.Models;
+using RagAssistant.Web.Health;
+using RagAssistant.Web.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -207,17 +213,55 @@ builder.Services.AddSingleton(sp =>
         vectorDbConnectionString,
         sp.GetRequiredService<ILogger<ConversationService>>()));
 
+// Startup ingestion runs in the background so the app serves traffic immediately.
+builder.Services.AddSingleton<IngestionStatusService>();
+builder.Services.AddHostedService<StartupIngestionService>();
+
+// ── Health checks ─────────────────────────────────────────────────────────────
+
+builder.Services.AddHttpClient("health", c => c.Timeout = TimeSpan.FromSeconds(5));
+builder.Services.AddHealthChecks()
+    .AddCheck<OllamaHealthCheck>("ollama", tags: ["ready"])
+    .AddCheck<IngestionHealthCheck>("ingestion", tags: ["ready"]);
+
+// ── Rate limiting ─────────────────────────────────────────────────────────────
+// Per-user sliding window on /api/chat — each request drives an LLM generation,
+// so a runaway client (or a stuck retry loop) can otherwise pin the CPU/GPU.
+
+var rateCfg          = builder.Configuration.GetSection("RateLimiting");
+var chatPermitLimit  = rateCfg.GetValue("ChatPermitLimit", 20);
+var chatWindowSeconds = rateCfg.GetValue("ChatWindowSeconds", 60);
+
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    o.AddPolicy("chat", ctx => RateLimitPartition.GetSlidingWindowLimiter(
+        ctx.User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? ctx.Connection.RemoteIpAddress?.ToString()
+            ?? "anonymous",
+        _ => new SlidingWindowRateLimiterOptions
+        {
+            PermitLimit       = chatPermitLimit,
+            Window            = TimeSpan.FromSeconds(chatWindowSeconds),
+            SegmentsPerWindow = 4,
+            QueueLimit        = 0,
+        }));
+});
+
 var app = builder.Build();
 
 app.UseForwardedHeaders();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 // Require auth for all requests — OIDC callback (/signin-oidc) is handled by
 // UseAuthentication() before this middleware runs, so it is not blocked.
+// Health probes must stay anonymous: Docker/K8s probes have no cookies.
 app.Use(async (ctx, next) =>
 {
-    if (ctx.User.Identity?.IsAuthenticated != true)
+    if (!ctx.Request.Path.StartsWithSegments("/health")
+        && ctx.User.Identity?.IsAuthenticated != true)
     {
         await ctx.ChallengeAsync(OpenIdConnectDefaults.AuthenticationScheme);
         return;
@@ -229,47 +273,35 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 // ── Startup tasks ─────────────────────────────────────────────────────────────
+// Schema setup is fast and must finish before the first request; document
+// ingestion is slow and runs in StartupIngestionService instead.
 
 var convService = app.Services.GetRequiredService<ConversationService>();
 await convService.EnsureTablesAsync();
 
-using (var scope = app.Services.CreateScope())
-{
-    var adoCfg     = builder.Configuration.GetSection("AzureDevOps");
-    var adoBaseUrl = adoCfg["BaseUrl"];
+// ── Health endpoints (anonymous — used by Docker healthchecks / K8s probes) ───
 
-    if (!string.IsNullOrEmpty(adoBaseUrl))
+// Liveness: the process is up and can serve requests.
+app.MapHealthChecks("/health", new HealthCheckOptions { Predicate = _ => false });
+
+// Readiness: dependencies are reachable. Degraded (e.g. ingestion still running)
+// still returns 200 — the app can answer from the existing index.
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = c => c.Tags.Contains("ready"),
+    ResponseWriter = async (ctx, report) =>
     {
-        var adoIngestion = scope.ServiceProvider.GetRequiredService<AzureDevOpsIngestionService>();
-        try
+        ctx.Response.ContentType = "application/json; charset=utf-8";
+        var payload = JsonSerializer.Serialize(new
         {
-            app.Logger.LogInformation("Running startup ADO sync...");
-            await adoIngestion.SyncAndIngestAsync();
-            app.Logger.LogInformation("Startup ADO sync complete.");
-        }
-        catch (Exception ex)
-        {
-            app.Logger.LogError(ex, "Startup ADO sync failed — falling back to local ingestion.");
-            var ingestion = scope.ServiceProvider.GetRequiredService<MarkdownIngestionService>();
-            try { await ingestion.IngestAllAsync(); }
-            catch (Exception ex2) { app.Logger.LogError(ex2, "Local ingestion also failed."); }
-        }
-    }
-    else
-    {
-        var ingestion = scope.ServiceProvider.GetRequiredService<MarkdownIngestionService>();
-        try
-        {
-            app.Logger.LogInformation("Running startup ingestion...");
-            await ingestion.IngestAllAsync();
-            app.Logger.LogInformation("Startup ingestion complete.");
-        }
-        catch (Exception ex)
-        {
-            app.Logger.LogError(ex, "Startup ingestion failed — app will still start.");
-        }
-    }
-}
+            status  = report.Status.ToString(),
+            entries = report.Entries.ToDictionary(
+                e => e.Key,
+                e => new { status = e.Value.Status.ToString(), description = e.Value.Description }),
+        }, SseJsonOptions);
+        await ctx.Response.WriteAsync(payload);
+    },
+});
 
 // ── Auth endpoints ────────────────────────────────────────────────────────────
 
@@ -352,6 +384,10 @@ app.MapPost("/api/ingest", async (
     await ingestion.IngestAllAsync(ct);
     return Results.Ok(new { message = "Ingestion complete." });
 }).RequireAuthorization("Admin");
+
+// GET /api/ingest/status — state of the background startup ingestion.
+app.MapGet("/api/ingest/status", (IngestionStatusService status) =>
+    Results.Ok(status.Snapshot())).RequireAuthorization();
 
 // POST /api/ado-webhook — receives ADO Server push events and triggers re-indexing.
 app.MapPost("/api/ado-webhook", async (
@@ -502,7 +538,7 @@ app.MapPost("/api/chat", async (
         await response.WriteAsync("data: [DONE]\n\n", CancellationToken.None);
         await response.Body.FlushAsync(CancellationToken.None);
     }
-}).RequireAuthorization();
+}).RequireAuthorization().RequireRateLimiting("chat");
 
 // POST /api/feedback — thumbs up (rating=1) or thumbs down (rating=-1) for an answer.
 app.MapPost("/api/feedback", async (
