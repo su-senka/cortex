@@ -16,6 +16,7 @@ x-app-base: &app-base
   volumes:
     - ./docs:/docs
     - ado-cache:/docs/ado-sync
+    - github-cache:/docs/github-sync
     - rag-data:/data
   networks:
     default:
@@ -51,6 +52,12 @@ x-app-env: &app-env
   AzureDevOps__Branch: ${ADO_BRANCH:-main}
   AzureDevOps__PersonalAccessToken: ${ADO_PAT:-}
   AzureDevOps__WebhookSecret: ${ADO_WEBHOOK_SECRET:-}
+  GitHub__Owner: ${GITHUB_OWNER:-}
+  GitHub__Repository: ${GITHUB_REPOSITORY:-}
+  GitHub__Path: ${GITHUB_PATH:-/}
+  GitHub__Branch: ${GITHUB_BRANCH:-main}
+  GitHub__PersonalAccessToken: ${GITHUB_PAT:-}
+  GitHub__WebhookSecret: ${GITHUB_WEBHOOK_SECRET:-}
   OTEL_SERVICE_NAME: cortex
   OTEL_EXPORTER_OTLP_ENDPOINT: http://aspire-dashboard:18889
 
@@ -170,5 +177,6 @@ services:
 volumes:
   rag-data:
   ado-cache:
+  github-cache:
   ollama-models:
   keycloak-data:

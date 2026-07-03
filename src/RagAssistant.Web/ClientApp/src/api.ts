@@ -31,11 +31,12 @@ export async function* streamChat(
   question: string,
   conversationId: string | null,
   signal: AbortSignal,
+  tagFilter?: string,
 ): AsyncGenerator<SseEvent> {
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, conversationId }),
+    body: JSON.stringify({ question, conversationId, tagFilter: tagFilter || null }),
     signal,
   });
 

@@ -5,6 +5,7 @@ import rehypeRaw from 'rehype-raw';
 import { api } from '../api';
 import { useAppStore } from '../store';
 import type { ChatMessage } from '../types';
+import { CodeBlock } from './CodeBlock';
 
 interface Props {
   message: ChatMessage;
@@ -56,10 +57,13 @@ export function MessageBubble({ message }: Props) {
           <span className="streaming-cursor" aria-hidden="true">▋</span>
         </div>
       ) : (
-        <div className="prose prose-sm max-w-none dark:prose-invert prose-code:before:content-none prose-code:after:content-none prose-code:bg-gray-100 prose-code:px-1 prose-code:rounded dark:prose-code:bg-gray-800">
+        <div className="prose prose-sm max-w-none dark:prose-invert prose-code:before:content-none prose-code:after:content-none prose-code:bg-gray-200 prose-code:text-gray-900 prose-code:px-1 prose-code:rounded dark:prose-code:bg-gray-700 dark:prose-code:text-gray-100">
           <ReactMarkdown
             rehypePlugins={[rehypeHighlight, rehypeRaw]}
             components={{
+              // Fenced code blocks get a copy button and an always-dark,
+              // high-contrast container (see CodeBlock).
+              pre: CodeBlock,
               // Intercept <cite data-n="N"> inserted by preprocessCitations.
               cite: ({ node }) => {
                 const n = Number(

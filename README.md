@@ -122,11 +122,18 @@ Each compose profile sets `ASPNETCORE_ENVIRONMENT` (`Development` / `Codespaces`
 | `Ollama:BaseUrl` | `http://localhost:11434` | Ollama API URL |
 | `Ollama:ChatModel` | `qwen2.5:7b-instruct-q4_K_M` | Model for answering questions |
 | `Ollama:EmbeddingModel` | `nomic-embed-text` | Model for generating embeddings |
-| `Rag:DocsFolder` | `../../docs` | Folder containing `.md` files |
+| `Rag:DocsFolder` | `../../docs` | Folder containing `.md` and `.pdf` files |
 | `Rag:VectorDbPath` | `rag_store.db` | SQLite vector database file (relative to app ContentRoot) |
 | `Rag:ChunkSize` | `1500` | Max characters per chunk |
 | `Rag:ChunkOverlap` | `150` | Characters of overlap between consecutive chunks |
 | `Rag:TopK` | `5` | Number of chunks retrieved per query |
+| `Rag:HybridSearch` | `true` | Merge BM25 (SQLite FTS5) with vector search via Reciprocal Rank Fusion |
+| `Rag:RrfK` | `60` | RRF constant — larger values flatten rank differences |
+| `Rag:MaxHistoryMessages` | `12` | Sliding-window limit on conversation history sent to the LLM |
+| `Rag:Hyde:Enabled` | `false` | HyDE: embed a hypothetical answer for short questions (extra LLM call) |
+| `Rag:Hyde:MaxQuestionLength` | `100` | Questions at or below this length use HyDE |
+| `Rag:Reranking:Enabled` | `false` | LLM reranking of TopK×multiplier candidates (extra LLM call) |
+| `Rag:Reranking:CandidateMultiplier` | `2` | Over-fetch factor for rerank candidates |
 | `RateLimiting:ChatPermitLimit` | `20` | Max `/api/chat` requests per user per window |
 | `RateLimiting:ChatWindowSeconds` | `60` | Sliding-window length for the chat rate limit |
 | `Oidc:Authority` | — | Keycloak realm URL used for discovery and token validation |
@@ -146,7 +153,10 @@ Compose reads secrets from a git-ignored `.env` file — copy `.env.example` and
 | `OIDC_PUBLIC_ORIGIN` | app (production) | Browser-facing Keycloak origin, if different |
 | `ADO_BASE_URL` / `ADO_PROJECT` / `ADO_REPOSITORY` / `ADO_PATH` / `ADO_BRANCH` | app | Azure DevOps connector (leave empty to ingest `./docs`) |
 | `ADO_PAT` | app | Azure DevOps personal access token |
-| `ADO_WEBHOOK_SECRET` | app | HMAC secret for `/api/ado-webhook` |
+| `ADO_WEBHOOK_SECRET` | app | HMAC-SHA1 secret for `/api/ado-webhook` |
+| `GITHUB_OWNER` / `GITHUB_REPOSITORY` / `GITHUB_PATH` / `GITHUB_BRANCH` | app | GitHub connector (leave empty to skip) |
+| `GITHUB_PAT` | app | GitHub personal access token (repo read scope) |
+| `GITHUB_WEBHOOK_SECRET` | app | HMAC-SHA256 secret for `/api/github-webhook` |
 | `KEYCLOAK_PUBLIC_URL` | app (codespaces) | Written automatically by `start-codespaces.sh` |
 
 For overrides that shouldn't be committed (extra ports, different volumes, more env vars), use a `docker-compose.override.yml` — compose merges it automatically:
@@ -168,6 +178,8 @@ services:
 | `GET /health/ready` | none | Readiness — Ollama reachability + ingestion state (JSON) |
 | `GET /api/ingest/status` | user | State of the background startup ingestion |
 | `POST /api/ingest` | admin | Re-scan and re-index the docs folder |
+| `POST /api/ado-webhook` | HMAC-SHA1 | Azure DevOps push event → re-sync and re-index |
+| `POST /api/github-webhook` | HMAC-SHA256 | GitHub push event → re-sync and re-index |
 | `GET /api/admin/feedback` | admin | Aggregated thumbs-up/down stats |
 
 ---

@@ -110,7 +110,8 @@ export function ChatPane() {
     let newConversationId: string | null = null;
 
     try {
-      for await (const event of streamChat(question, activeConversationId, ac.signal)) {
+      const tagFilter = useAppStore.getState().tagFilter.trim();
+      for await (const event of streamChat(question, activeConversationId, ac.signal, tagFilter)) {
         if (event.t === 'sources') {
           sources = event.v;
           setSources(sources, {});

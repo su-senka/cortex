@@ -32,6 +32,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<OllamaOptions>(builder.Configuration.GetSection("Ollama"));
 builder.Services.Configure<RagOptions>(builder.Configuration.GetSection("Rag"));
 builder.Services.Configure<AzureDevOpsOptions>(builder.Configuration.GetSection("AzureDevOps"));
+builder.Services.Configure<GitHubOptions>(builder.Configuration.GetSection("GitHub"));
 
 var ollamaCfg  = builder.Configuration.GetSection("Ollama");
 var ragCfg     = builder.Configuration.GetSection("Rag");
@@ -205,8 +206,12 @@ builder.Services.AddSingleton<VectorStoreCollection<string, DocumentChunk>>(
 // ── Application services ──────────────────────────────────────────────────────
 
 builder.Services.AddHttpClient("ado");
+builder.Services.AddHttpClient("github");
+builder.Services.AddSingleton(new FullTextIndex(vectorDbConnectionString));
 builder.Services.AddSingleton<MarkdownIngestionService>();
+builder.Services.AddSingleton<DocumentSourceSynchronizer>();
 builder.Services.AddSingleton<AzureDevOpsIngestionService>();
+builder.Services.AddSingleton<GitHubIngestionService>();
 builder.Services.AddSingleton<RagQueryService>();
 builder.Services.AddSingleton(sp =>
     new ConversationService(
@@ -278,6 +283,10 @@ app.UseStaticFiles();
 
 var convService = app.Services.GetRequiredService<ConversationService>();
 await convService.EnsureTablesAsync();
+
+// The FTS table must exist before the first /api/chat — background ingestion may
+// still be running when the first hybrid search fires.
+await app.Services.GetRequiredService<FullTextIndex>().EnsureCreatedAsync();
 
 // ── Health endpoints (anonymous — used by Docker healthchecks / K8s probes) ───
 
@@ -425,6 +434,42 @@ app.MapPost("/api/ado-webhook", async (
     return Results.Accepted(value: new { message = "Push received, sync started." });
 });
 
+// POST /api/github-webhook — receives GitHub push events and triggers re-indexing.
+app.MapPost("/api/github-webhook", async (
+    HttpRequest request,
+    GitHubIngestionService github,
+    DocumentSourceSynchronizer synchronizer,
+    ILoggerFactory loggerFactory,
+    CancellationToken ct) =>
+{
+    var logger = loggerFactory.CreateLogger("GitHubWebhook");
+
+    request.EnableBuffering();
+    var body = await new StreamReader(request.Body).ReadToEndAsync(ct);
+
+    var signature = request.Headers["X-Hub-Signature-256"].FirstOrDefault() ?? "";
+    if (!github.ValidateWebhookSignature(body, signature))
+    {
+        logger.LogWarning("GitHub webhook rejected: invalid signature.");
+        return Results.Unauthorized();
+    }
+
+    var eventType = request.Headers["X-GitHub-Event"].FirstOrDefault();
+    if (eventType != "push")
+    {
+        logger.LogDebug("GitHub webhook: ignoring event type '{EventType}'.", eventType);
+        return Results.Ok(new { message = $"Event type '{eventType}' ignored." });
+    }
+
+    _ = Task.Run(async () =>
+    {
+        try { await synchronizer.SyncAndIngestAsync(github); }
+        catch (Exception ex) { logger.LogError(ex, "GitHub webhook sync failed."); }
+    }, CancellationToken.None);
+
+    return Results.Accepted(value: new { message = "Push received, sync started." });
+});
+
 // POST /api/chat — streams the answer as Server-Sent Events.
 // Request:  { "question": "...", "conversationId": "..." | null }
 // SSE:
@@ -487,7 +532,7 @@ app.MapPost("/api/chat", async (
 
     try
     {
-        var result = await rag.QueryAsync(req.Question, history, ct);
+        var result = await rag.QueryAsync(req.Question, history, req.TagFilter, ct);
 
         var sourcesJson = JsonSerializer.Serialize(new
         {
@@ -566,7 +611,7 @@ app.Run();
 
 // ── Supporting types ──────────────────────────────────────────────────────────
 
-record ChatRequest(string Question, string? ConversationId);
+record ChatRequest(string Question, string? ConversationId, string? TagFilter);
 record FeedbackRequest(string MessageId, int Rating);
 
 static partial class Program

@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -7,64 +8,56 @@ using Microsoft.Extensions.Options;
 
 namespace RagAssistant.Core.Ingestion;
 
+/// <summary>
+/// Document source for an Azure DevOps (Server) git repository: lists .md files
+/// under the configured path via the items API and streams their contents.
+/// Mirroring to disk and ingestion are handled by <see cref="DocumentSourceSynchronizer"/>.
+/// </summary>
 public sealed class AzureDevOpsIngestionService(
     IHttpClientFactory httpFactory,
-    MarkdownIngestionService ingestion,
+    DocumentSourceSynchronizer synchronizer,
     IOptions<AzureDevOpsOptions> adoOptions,
-    IOptions<RagOptions> ragOptions,
-    ILogger<AzureDevOpsIngestionService> logger)
+    ILogger<AzureDevOpsIngestionService> logger) : IDocumentSource
 {
     private readonly AzureDevOpsOptions _ado = adoOptions.Value;
-    private readonly RagOptions _rag = ragOptions.Value;
-    private readonly SemaphoreSlim _lock = new(1, 1);
+
+    // Cache folder becomes "{DocsFolder}/ado-sync" — matches the compose volume mount.
+    public string Name => "ado";
+
+    public bool IsConfigured => !string.IsNullOrEmpty(_ado.BaseUrl);
 
     /// <summary>
-    /// Downloads all .md files from the configured ADO repo path into a local cache
-    /// directory, then delegates to MarkdownIngestionService.IngestAllAsync so the
-    /// existing embedding pipeline runs unchanged.
+    /// Downloads all .md files from the configured ADO repo path into the local cache
+    /// directory, then runs the shared ingestion pipeline.
     /// Safe to call concurrently — a second call while one is in progress is a no-op.
     /// </summary>
-    public async Task SyncAndIngestAsync(CancellationToken ct = default)
+    public Task SyncAndIngestAsync(CancellationToken ct = default) =>
+        synchronizer.SyncAndIngestAsync(this, ct);
+
+    public async IAsyncEnumerable<RawDocument> SyncAsync(
+        [EnumeratorCancellation] CancellationToken ct = default)
     {
-        if (!await _lock.WaitAsync(0, ct))
+        using var http = CreateHttpClient();
+
+        var remoteFiles = await ListMarkdownFilesAsync(http, ct);
+        logger.LogInformation("ADO: {Count} markdown file(s) in {Repo}{Path}",
+            remoteFiles.Count, _ado.Repository, _ado.Path);
+
+        foreach (var remotePath in remoteFiles)
         {
-            logger.LogInformation("ADO sync already in progress, skipping.");
-            return;
-        }
+            var url = ItemsBaseUrl()
+                + $"?path={Uri.EscapeDataString(remotePath)}"
+                + $"&versionDescriptor.versionType=branch&versionDescriptor.version={Uri.EscapeDataString(_ado.Branch)}"
+                + "&api-version=6.0";
 
-        try
-        {
-            logger.LogInformation("Starting ADO sync from {Repo}/{Path}", _ado.Repository, _ado.Path);
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/plain"));
 
-            using var http = CreateHttpClient();
-            var cacheDir = GetCacheDirectory();
-            Directory.CreateDirectory(cacheDir);
+            var response = await http.SendAsync(request, ct);
+            response.EnsureSuccessStatusCode();
+            var content = await response.Content.ReadAsStringAsync(ct);
 
-            var remoteFiles = await ListMarkdownFilesAsync(http, ct);
-            var downloadedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var remotePath in remoteFiles)
-            {
-                var localPath = RemotePathToLocal(cacheDir, remotePath);
-                await DownloadFileAsync(http, remotePath, localPath, ct);
-                downloadedPaths.Add(localPath);
-            }
-
-            // Remove files that no longer exist in the ADO repo.
-            foreach (var existing in Directory.GetFiles(cacheDir, "*.md", SearchOption.AllDirectories))
-            {
-                if (downloadedPaths.Contains(existing)) continue;
-                
-                File.Delete(existing);
-                logger.LogInformation("Removed stale local file: {Path}", existing);
-            }
-
-            logger.LogInformation("Downloaded {Count} file(s) from ADO, running ingestion.", remoteFiles.Count);
-            await ingestion.IngestAllAsync(ct);
-        }
-        finally
-        {
-            _lock.Release();
+            yield return new RawDocument(remotePath.TrimStart('/'), content);
         }
     }
 
@@ -118,28 +111,6 @@ public sealed class AzureDevOpsIngestionService(
             .ToList();
     }
 
-    private async Task DownloadFileAsync(
-        HttpClient http, string remotePath, string localPath, CancellationToken ct)
-    {
-        var url = ItemsBaseUrl()
-            + $"?path={Uri.EscapeDataString(remotePath)}"
-            + $"&versionDescriptor.versionType=branch&versionDescriptor.version={Uri.EscapeDataString(_ado.Branch)}"
-            + "&api-version=6.0";
-
-        var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/plain"));
-
-        var response = await http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
-
-        var content = await response.Content.ReadAsStringAsync(ct);
-        var dir = Path.GetDirectoryName(localPath);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-
-        await File.WriteAllTextAsync(localPath, content, ct);
-        logger.LogDebug("Downloaded {Remote} → {Local}", remotePath, localPath);
-    }
-
     private HttpClient CreateHttpClient()
     {
         var http = httpFactory.CreateClient("ado");
@@ -153,13 +124,4 @@ public sealed class AzureDevOpsIngestionService(
 
     private string ItemsBaseUrl() =>
         $"{_ado.BaseUrl.TrimEnd('/')}/{Uri.EscapeDataString(_ado.Project)}/_apis/git/repositories/{Uri.EscapeDataString(_ado.Repository)}/items";
-
-    private string GetCacheDirectory() =>
-        Path.Combine(Path.GetFullPath(_rag.DocsFolder), "ado-sync");
-
-    private static string RemotePathToLocal(string cacheDir, string remotePath)
-    {
-        var relative = remotePath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
-        return Path.Combine(cacheDir, relative);
-    }
 }

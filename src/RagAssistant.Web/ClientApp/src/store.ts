@@ -13,12 +13,16 @@ interface AppStore {
   selectedSource: Source | null;
   sidebarOpen: boolean; // mobile drawer state; ignored on desktop widths
   theme: Theme;
+  // Optional retrieval scope: only chunks whose front-matter tags contain this
+  // value are searched. Empty string = no filter.
+  tagFilter: string;
 
   setActiveConversation: (id: string | null) => void;
   setSources: (sources: Source[], citations: Citations) => void;
   setSelectedSource: (source: Source | null) => void;
   setSidebarOpen: (open: boolean) => void;
   setTheme: (theme: Theme) => void;
+  setTagFilter: (tagFilter: string) => void;
   clearChat: () => void;
 }
 
@@ -29,6 +33,7 @@ export const useAppStore = create<AppStore>((set) => ({
   selectedSource: null,
   sidebarOpen: false,
   theme: getStoredTheme(),
+  tagFilter: '',
 
   setActiveConversation: (id) =>
     set({ activeConversationId: id, sources: [], citations: {}, selectedSource: null }),
@@ -38,6 +43,8 @@ export const useAppStore = create<AppStore>((set) => ({
   setSelectedSource: (source) => set({ selectedSource: source }),
 
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
+
+  setTagFilter: (tagFilter) => set({ tagFilter }),
 
   setTheme: (theme) => {
     applyTheme(theme);

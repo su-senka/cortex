@@ -5,14 +5,17 @@ namespace RagAssistant.Web.Services;
 /// <summary>
 /// Runs the initial document ingestion in the background so the app serves traffic
 /// immediately after startup instead of blocking until embedding completes.
+/// Configured remote sources (ADO, GitHub) are synced first; if none are configured
+/// the local docs folder is ingested directly.
 /// Progress is reported through <see cref="IngestionStatusService"/> and surfaced
 /// on /health/ready and /api/ingest/status.
 /// </summary>
 public sealed class StartupIngestionService(
     MarkdownIngestionService ingestion,
-    AzureDevOpsIngestionService adoIngestion,
+    DocumentSourceSynchronizer synchronizer,
+    AzureDevOpsIngestionService adoSource,
+    GitHubIngestionService gitHubSource,
     IngestionStatusService status,
-    IConfiguration configuration,
     ILogger<StartupIngestionService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -22,26 +25,31 @@ public sealed class StartupIngestionService(
 
         status.MarkRunning();
 
-        var adoBaseUrl = configuration["AzureDevOps:BaseUrl"];
+        IDocumentSource[] sources = [adoSource, gitHubSource];
+        var configured = sources.Where(s => s.IsConfigured).ToList();
 
         try
         {
-            if (!string.IsNullOrEmpty(adoBaseUrl))
+            if (configured.Count > 0)
             {
-                try
+                foreach (var source in configured)
                 {
-                    logger.LogInformation("Running startup ADO sync...");
-                    await adoIngestion.SyncAndIngestAsync(stoppingToken);
-                    logger.LogInformation("Startup ADO sync complete.");
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Startup ADO sync failed — falling back to local ingestion.");
-                    await ingestion.IngestAllAsync(stoppingToken);
+                    try
+                    {
+                        logger.LogInformation("Running startup {Source} sync...", source.Name);
+                        await synchronizer.SyncAndIngestAsync(source, stoppingToken);
+                        logger.LogInformation("Startup {Source} sync complete.", source.Name);
+                    }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex,
+                            "Startup {Source} sync failed — falling back to local ingestion.", source.Name);
+                        await ingestion.IngestAllAsync(stoppingToken);
+                    }
                 }
             }
             else

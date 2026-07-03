@@ -12,221 +12,102 @@ This document captures the current state of the application and the prioritised 
 - Zero cloud dependency — everything runs on local hardware
 - Deterministic citations (sources retrieved before the LLM call, no hallucinated references)
 - Idempotent ingestion with chunk-level upserts and deletion of stale chunks
-- SSE streaming chat responses with Markdown rendering and syntax highlighting
+- **Hybrid retrieval** — vector search + BM25 (SQLite FTS5) merged with Reciprocal Rank Fusion; optional HyDE and LLM reranking behind config flags
+- **Tag scoping** — front-matter tags are wired as a retrieval pre-filter, settable from the chat UI
+- Sliding-window conversation history so long chats don't blow the context window
+- SSE streaming chat responses with Markdown rendering, syntax highlighting, and per-code-block copy buttons on a high-contrast (always-dark) code surface
 - Inline citation footnotes `[^N]` that open a source passage modal with keyword highlighting
-- Thumbs-up / thumbs-down feedback per assistant message
+- Thumbs-up / thumbs-down feedback per assistant message + admin feedback audit endpoint
 - Conversation history with per-user isolation
-- Azure DevOps webhook-triggered re-indexing; admin-only `/api/ingest` endpoint
-- OIDC authentication (cookie-based server-side flow) via Keycloak
-- Two launch environments: `./start-local.sh` (localhost) and `./start-codespaces.sh` (GitHub Codespaces, dynamic redirect URI registration)
-- React UI confirmed running with auth, chat streaming, conversation history, and citations all wired up
+- **Connectors** — `IDocumentSource` abstraction with Azure DevOps and GitHub implementations (webhook-triggered re-indexing for both), plus PDF ingestion via PdfPig
+- OIDC authentication (cookie-based server-side flow) via Keycloak, admin role gating, hardened production config
+- OpenTelemetry traces / metrics / logs to a bundled Aspire Dashboard container
+- Health/readiness endpoints, background startup ingestion, per-user rate limiting, WAL-mode SQLite
+- Three compose profiles (`local`, `codespaces`, `production`) with per-environment `appsettings.{Env}.json`; nginx TLS proxy in production
 
-**Gaps before production or public release:**
-- No observability — no traces, no structured logs, no metrics
-- Environment config scattered between shell scripts and `appsettings.json`; no clean `Development` / `Codespaces` / `Production` config layer
-- UI functional but not visually polished; missing modern chat-app UX patterns
-- Several OIDC security settings are permissive (`ValidateIssuer = false`, `RequireHttpsMetadata = false`)
-- No HTTPS or TLS in the Docker stack
-- PAT and other secrets embedded in config files
-- No health / readiness endpoints
-- Startup ingestion blocks app start (synchronous)
-- No tests
+**Gaps before public release:**
+- No tests (Direction 8)
+- No OSS packaging — license, CI, published image (Direction 9)
+- Connectors for Confluence / SharePoint / Notion not yet implemented (deferred until needed)
 
 ---
 
-## Direction 1 — Observability & Audit  *(do first)*
+## Direction 1 — Observability & Audit  ✅ Done
 
-The single highest-leverage investment for understanding what the app is doing — and for debugging the RAG pipeline when answers are wrong.
-
-### Recommended approach: .NET Aspire Dashboard (standalone)
-
-Run the Aspire Dashboard as an extra container in `docker-compose.yml`. It is a fully self-contained OpenTelemetry viewer (traces, structured logs, metrics) with no Prometheus, Grafana, or Collector required. The app sends OTLP over gRPC; the dashboard displays it. No changes to the app host model or the Compose orchestration are needed.
-
-```yaml
-# docker-compose.yml addition
-aspire-dashboard:
-  image: mcr.microsoft.com/dotnet/aspire-dashboard:latest
-  ports:
-    - "18888:18888"   # Dashboard UI
-    - "18889:18889"   # OTLP gRPC receiver
-  environment:
-    DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS: "true"
-```
-
-Wire the app:
-
-```csharp
-// Program.cs
-builder.Services.AddOpenTelemetry()
-    .WithTracing(t => t
-        .AddAspNetCoreInstrumentation()
-        .AddHttpClientInstrumentation()
-        .AddOtlpExporter())
-    .WithMetrics(m => m
-        .AddAspNetCoreInstrumentation()
-        .AddOtlpExporter())
-    .WithLogging(l => l.AddOtlpExporter());
-```
-
-Set `OTEL_EXPORTER_OTLP_ENDPOINT=http://aspire-dashboard:18889` in the app's Compose environment.
-
-### What to instrument
-
-| Span / metric | Why |
-|---|---|
-| Embedding call (duration) | Catch slow nomic-embed-text pulls |
-| Vector search (duration + result count) | Diagnose retrieval misses |
-| LLM streaming call (time-to-first-token, total duration) | Baseline model latency |
-| `/api/chat` request (end-to-end) | User-visible latency |
-| Ingestion run (docs processed, chunks upserted/deleted) | Catch silently failing re-indexes |
-
-### Structured logging
-
-Replace the default console logger with **Serilog** + `Serilog.Sinks.Console` using `JsonFormatter`. The Aspire Dashboard ingests structured logs natively — every `ILogger.LogInformation(...)` call becomes a searchable, filterable record in the UI.
-
-### Feedback audit view
-
-The `feedback` table stores thumbs-up/down per message. Add a read-only `/api/admin/feedback` endpoint (role-gated to `admin`) returning aggregated stats: top-rated questions, low-rated questions, query volume over time, most-cited files. This surfaces the primary signal for RAG quality improvement without building a separate admin UI yet.
+Shipped: standalone Aspire Dashboard container in the Compose stack; OpenTelemetry tracing/metrics/logging over OTLP (`OTEL_EXPORTER_OTLP_ENDPOINT`); custom spans and metrics for embedding, vector search, BM25, HyDE, reranking, chat, and ingestion (`Telemetry.cs`); structured JSON console logging; read-only admin feedback audit at `/api/admin/feedback`.
 
 ---
 
-## Direction 2 — Clean Environment Separation  *(do second)*
+## Direction 2 — Clean Environment Separation  ✅ Done
 
-Currently, environment-specific config is driven by shell scripts and commented-out `appsettings.json` blocks. Replace this with a proper ASP.NET config layer so each environment is self-describing and composable.
-
-### Config layer target
-
-| File | Purpose |
-|---|---|
-| `appsettings.json` | Shared defaults; no secrets, no hostnames |
-| `appsettings.Development.json` | Local dev overrides (`localhost`, `RequireHttpsMetadata = false`, etc.) |
-| `appsettings.Codespaces.json` | Codespaces overrides; consumed when `ASPNETCORE_ENVIRONMENT=Codespaces` |
-| `appsettings.Production.json` | Strict OIDC validation, HTTPS redirection, structured logging |
-| `docker-compose.override.yml` | Host-level secrets injected as env vars, never committed |
-
-### Actions
-
-- Set `ASPNETCORE_ENVIRONMENT` in each Compose profile (`development`, `codespaces`, `production`) rather than in shell scripts
-- Replace the `start-local.sh` / `start-codespaces.sh` divergence with `docker compose --profile local up` and `docker compose --profile codespaces up`
-- Pull the Keycloak admin password, ADO PAT, and webhook secret from environment variables (already in `.env`) rather than hardcoded in `appsettings.json`
-- Add `appsettings.Production.json` that sets `ValidateIssuer = true`, `ValidateAudience = true`, `ValidIssuers`, `ValidAudiences`, and `RequireHttpsMetadata = true`
-- Document all environment variables in `README.md` with a `docker-compose.override.yml` example
-
-### HTTPS for production
-
-Add an **nginx** reverse-proxy service to the Compose stack for production:
-- Self-signed cert for LAN/intranet use (generated once, mounted as a volume)
-- Certbot sidecar for public deployments with a real domain
+Shipped: `appsettings.json` (shared defaults, no secrets) + `Development` / `Codespaces` / `Production` overlays; `ASPNETCORE_ENVIRONMENT` set per Compose profile (`local`, `codespaces`, `production`); secrets pulled from `.env` (documented in `.env.example`); nginx TLS reverse proxy for the production profile with `scripts/gen-certs.sh` for self-signed certs.
 
 ---
 
-## Direction 3 — UI Polish  *(do third)*
+## Direction 3 — UI Polish  ✅ Done
 
-The UI is functional but visually dated compared to modern chat products. The goal here is not a redesign — it is a targeted set of improvements that lift perceived quality to the level of ChatGPT / Claude.ai without changing the architecture.
-
-### High-impact changes
-
-| Area | Change |
-|---|---|
-| **Chat input** | Auto-expanding textarea (grows to ~5 lines, then scrolls); submit on `Enter`, newline on `Shift+Enter` |
-| **Message bubbles** | User messages right-aligned with a distinct background; assistant messages full-width with no bubble; remove visual symmetry |
-| **Streaming cursor** | Blinking `▋` appended during token streaming; disappears when `[DONE]` arrives |
-| **Typing / loading state** | Three-dot animated indicator between user message and first token |
-| **Empty state** | Centred prompt suggestions on a fresh conversation ("What is the VPN setup process?", "How do I rotate a TLS cert?") |
-| **Sidebar** | Conversation list with relative timestamps; keyboard shortcut `⌘K` to focus the search input |
-| **New conversation** | Sticky `+ New chat` button at top of sidebar; `⌘N` shortcut |
-| **Source panel** | Collapsible; show a preview card (file path + first 2 lines of the passage) before the user opens the modal |
-| **Dark mode** | System-preference-respecting `prefers-color-scheme` toggle stored in `localStorage` |
-| **Mobile layout** | Sidebar as a slide-in drawer; source panel hidden by default on small screens |
-| **Scrolling** | Auto-scroll to bottom during streaming; "Scroll to bottom" button appears when user scrolls up mid-stream |
-| **Copy button** | Per-message copy-to-clipboard button (appears on hover) |
-
-### Accessibility
-
-- Focus the chat input automatically after page load and after each response completes
-- `aria-live="polite"` region for streaming tokens so screen readers announce new content
-- All interactive elements keyboard-navigable
+Shipped: auto-expanding textarea (Enter/Shift+Enter), asymmetric message layout, blinking streaming cursor, three-dot typing indicator, empty-state prompt suggestions, sidebar with relative timestamps + ⌘K search + ⌘N new chat, collapsible source panel with preview cards, system-aware dark mode, mobile drawer sidebar, smart auto-scroll with "scroll to bottom" button, per-message copy button, per-code-block copy button with language label, always-dark high-contrast code blocks (github-dark palette in both themes), focus management and `aria-live` streaming region.
 
 ---
 
-## Direction 4 — Security Hardening  *(do alongside Direction 2 for prod)*
+## Direction 4 — Security Hardening  ✅ Done
 
-| Issue | Fix |
-|---|---|
-| `RequireHttpsMetadata = false` | Enable in `appsettings.Production.json`; keep `false` in `Development` only |
-| `ValidateIssuer = false` / `ValidateAudience = false` | Set both to `true` in production config; configure `ValidIssuers` / `ValidAudiences` |
-| Re-index endpoint open to all users | Add an `admin` Keycloak role claim check on `/api/ingest` |
-| ADO PAT in config | Read from environment variable at runtime; document in `.env.example` |
-| No HTTPS in Docker stack | nginx reverse proxy (see Direction 2) |
-| HMAC-SHA1 for ADO webhook | Acceptable for ADO Server compatibility; add a comment documenting the limitation |
+Shipped: strict OIDC validation (`RequireHttpsMetadata`, `ValidateIssuer`, `ValidateAudience`) in production config, relaxed only in `Development`/`Codespaces`; `cortex-admin` role required for `/api/ingest`; PAT/secrets from environment variables; nginx TLS in production; HMAC-SHA1 ADO webhook limitation documented in code (GitHub webhook uses HMAC-SHA256).
 
 ---
 
-## Direction 5 — Reliability  *(do before exposing to a team)*
+## Direction 5 — Reliability  ✅ Done
 
-- **Health endpoints** — add `/health` (liveness) and `/health/ready` (readiness, checks Ollama reachability) using `Microsoft.AspNetCore.Diagnostics.HealthChecks`. Wire the Docker Compose `healthcheck` to call `/health/ready`.
-- **Async startup ingestion** — move ingestion out of `Program.cs` into a `BackgroundService`. App serves traffic immediately; ingestion runs in the background and exposes status on `/health/ready` or a dedicated `/api/ingest/status`.
-- **SQLite concurrency** — the current `ConversationService` opens a new connection per call. Switch to a singleton connection in WAL mode (`Pooling=True; Journal Mode=WAL`) or add a `SemaphoreSlim(1,1)` guard.
-- **Rate limiting** — add `dotnet-ratelimiting` per-user sliding-window limiter on `/api/chat` to prevent accidental GPU hammering.
+Shipped: `/health` (liveness) and `/health/ready` (readiness with Ollama + ingestion checks) wired into the Compose healthcheck; startup ingestion moved to a `BackgroundService` with status on `/api/ingest/status`; SQLite WAL mode; per-user sliding-window rate limiting on `/api/chat`.
 
 ---
 
-## Direction 6 — RAG Quality Improvements
+## Direction 6 — RAG Quality Improvements  ✅ Done
 
-The retrieval pipeline is solid. These improvements increase answer quality as the doc corpus grows.
+All five improvements are implemented in `RagQueryService`:
 
-### Hybrid Search (BM25 + Vector)
+| Feature | Status | Config |
+|---|---|---|
+| Hybrid Search (BM25 via FTS5 + vector, RRF merge) | **On by default** | `Rag:HybridSearch`, `Rag:RrfK` |
+| LLM reranking of TopK×2 candidates | Off by default (extra LLM round-trip) | `Rag:Reranking:Enabled`, `Rag:Reranking:CandidateMultiplier` |
+| HyDE for short questions | Off by default (extra LLM round-trip) | `Rag:Hyde:Enabled`, `Rag:Hyde:MaxQuestionLength` |
+| Sliding-window history truncation | On (12 messages) | `Rag:MaxHistoryMessages` |
+| Metadata (tag) pre-filters from the front-end | On — "Scope to tag" input in the chat UI | — |
 
-Pure cosine similarity misses exact keyword matches. Combine vector search with BM25 full-text search (SQLite FTS5) and merge results with Reciprocal Rank Fusion (RRF). Improves recall on acronym-heavy internal docs significantly.
-
-### Reranking
-
-After retrieving `TopK × 2` candidates, run a cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2` via Ollama or a local ONNX model) to re-score and drop the weakest chunks before sending context to the LLM.
-
-### HyDE (Hypothetical Document Embedding)
-
-For short or ambiguous questions, generate a hypothetical answer first and embed *that* for retrieval. Improves recall when questions are phrased differently from the documentation language.
-
-### Context Window Management
-
-Add a sliding-window or summary-based history truncation strategy so older turns are compressed rather than dropped or sent verbatim as the conversation grows.
-
-### Metadata Filters
-
-`DocumentChunk` already has `Tags` and `LastVerified`. Wire them as pre-filters in the query path so users can scope search to a specific tag or recency from the front-end.
+Notes: the FTS5 index (`chunks_fts`) lives in the same SQLite file as the vector table and is kept in sync by the ingestion pipeline. Reranking uses the local chat model rather than a dedicated cross-encoder — revisit with a local ONNX cross-encoder if reranking quality matters at scale. `LastVerified` recency filtering is stored per chunk but not yet exposed in the UI.
 
 ---
 
-## Direction 7 — Document Source Connectors
+## Direction 7 — Document Source Connectors  ◐ Partially done
 
-The connector model (ADO → `MarkdownIngestionService`) is clean. Add connectors in this order:
+`IDocumentSource` (`SyncAsync()` → `IAsyncEnumerable<RawDocument>`) + `DocumentSourceSynchronizer` (mirror to cache folder, delete stale, ingest) are in place.
 
-| Source | Priority | Notes |
-|--------|----------|-------|
-| **PDF** | High | Many internal docs are PDF; use `PdfPig` to extract text |
-| **GitHub / GitLab** | High | Same PAT + HTTP pattern as ADO; webhook on push events |
-| **Confluence Cloud** | Medium | REST API; export as Markdown or parse HTML |
-| **SharePoint / OneDrive** | Medium | Microsoft Graph SDK |
-| **Notion** | Low | Notion SDK |
-
-Each connector should implement `IDocumentSource` with `SyncAsync()` returning `IAsyncEnumerable<RawDocument>`.
+| Source | Status | Notes |
+|--------|--------|-------|
+| **Azure DevOps** | ✅ Done | PAT + items API; HMAC-SHA1 webhook on `/api/ado-webhook` |
+| **PDF** | ✅ Done | PdfPig text extraction; pages become `## Page N` sections, so citations carry page numbers |
+| **GitHub / GitHub Enterprise** | ✅ Done | PAT + trees/contents API; HMAC-SHA256 push webhook on `/api/github-webhook` |
+| **Confluence Cloud** | Deferred | REST API; export as Markdown or parse HTML — add when a team needs it |
+| **SharePoint / OneDrive** | Deferred | Microsoft Graph SDK — add when a team needs it |
+| **Notion** | Deferred | Notion SDK — add when a team needs it |
 
 ---
 
-## Direction 8 — Testing
+## Direction 8 — Testing  ⬜ Remaining
 
 Zero tests is the biggest regression risk as the codebase grows. Add in priority order:
 
 1. **Unit tests for `MarkdownIngestionService`** — chunking logic, front-matter parsing, heading breadcrumbs. Pure functions, no deps; fast to write.
-2. **Unit tests for `RagQueryService`** — mock `IEmbeddingGenerator` and `VectorStoreCollection`; assert source building and history injection.
-3. **Integration tests for `ConversationService`** — in-memory SQLite; test create/get/delete/feedback and concurrency.
-4. **HTTP integration tests** — `WebApplicationFactory<Program>` with a stubbed Ollama; test SSE streaming, 401 on unauthenticated requests, and webhook signature validation.
+2. **Unit tests for `RagQueryService`** — mock `IEmbeddingGenerator`, `IChatClient`, and `VectorStoreCollection`; assert RRF fusion order, tag filtering, history windowing, and source building.
+3. **Unit tests for `FullTextIndex`** — in-memory SQLite; FTS5 query sanitisation (punctuation, quotes) and upsert/delete sync.
+4. **Integration tests for `ConversationService`** — in-memory SQLite; test create/get/delete/feedback and concurrency.
+5. **HTTP integration tests** — `WebApplicationFactory<Program>` with a stubbed Ollama; test SSE streaming, 401 on unauthenticated requests, and both webhook signature validations (SHA1 + SHA256).
 
 Stack: **xUnit** + **NSubstitute** + **FluentAssertions** in a `src/RagAssistant.Tests/` project.
 
 ---
 
-## Direction 9 — GitHub / OSS Readiness
+## Direction 9 — GitHub / OSS Readiness  ⬜ Remaining
 
 Required before publishing:
 
@@ -234,7 +115,7 @@ Required before publishing:
 - **`CONTRIBUTING.md`** — dev environment setup, coding conventions, PR process
 - **GitHub Actions CI** — `dotnet build` + `dotnet test` + `npm run build` on every PR; Docker build test on `main`
 - **Issue templates** — bug report and feature request in `.github/ISSUE_TEMPLATE/`
-- **Configurable app name** — `"Internal Docs Assistant"` is hardcoded in `index.html`; make it `App:Name` in `appsettings.json`
+- **Configurable app name** — `"Cortex"` is hardcoded in `index.html` / `Header.tsx`; make it `App:Name` in `appsettings.json`
 - **Published Docker image** — push to GitHub Container Registry (`ghcr.io`) on release tags so others can `docker compose up` without building locally
 - **Social preview** — a screenshot or short demo GIF in the README
 
@@ -242,15 +123,15 @@ Required before publishing:
 
 ## Priority Summary
 
-| # | Direction | Status | Why now |
-|---|---|---|---|
-| 1 | ~~React UI~~ | **Done** | — |
-| 2 | Observability & Audit | **Next** | Can't improve what you can't see; Aspire Dashboard is low-effort, high-value |
-| 3 | Environment separation | **Next** | Unblocks clean production config and removes shell-script hacks |
-| 4 | UI polish | After envs | Improves perceived quality for demos and team rollout |
-| 5 | Security hardening | With env work | Shares config layer with Direction 3; no standalone effort |
-| 6 | Reliability | Before team use | Health checks + async ingestion + rate limits |
-| 7 | RAG quality | After team use | Real usage data drives what to fix first |
-| 8 | Document connectors | As needed | Add only what the team actually uses |
-| 9 | Testing | Before OSS | Prevents regressions when contributors join |
-| 10 | OSS readiness | Last | Polish and publish once the product is stable |
+| # | Direction | Status |
+|---|---|---|
+| 1 | React UI | ✅ Done |
+| 2 | Observability & Audit | ✅ Done |
+| 3 | Environment separation | ✅ Done |
+| 4 | UI polish | ✅ Done |
+| 5 | Security hardening | ✅ Done |
+| 6 | Reliability | ✅ Done |
+| 7 | RAG quality | ✅ Done (reranker/HyDE off by default — enable after measuring on real usage) |
+| 8 | Document connectors | ◐ ADO + GitHub + PDF done; Confluence/SharePoint/Notion as needed |
+| 9 | Testing | ⬜ **Next** — before accepting outside contributions |
+| 10 | OSS readiness | ⬜ Last — polish and publish once tests are in |

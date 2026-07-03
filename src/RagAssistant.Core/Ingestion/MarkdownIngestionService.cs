@@ -14,6 +14,7 @@ namespace RagAssistant.Core.Ingestion;
 public sealed class MarkdownIngestionService(
     IEmbeddingGenerator<string, Embedding<float>> embedder,
     VectorStoreCollection<string, DocumentChunk> collection,
+    FullTextIndex fullText,
     IOptions<RagOptions> options,
     ILogger<MarkdownIngestionService> logger)
 {
@@ -33,6 +34,7 @@ public sealed class MarkdownIngestionService(
         using var activity = Telemetry.ActivitySource.StartActivity("rag.ingest");
 
         await collection.EnsureCollectionExistsAsync(ct);
+        await fullText.EnsureCreatedAsync(ct);
 
         var docsFolder = Path.GetFullPath(_options.DocsFolder);
         if (!Directory.Exists(docsFolder))
@@ -46,7 +48,11 @@ public sealed class MarkdownIngestionService(
         var metadataPath = DeriveMetadataPath(_options.VectorDbPath);
         var metadata = await LoadMetadataAsync(metadataPath, ct);
 
-        var mdFiles = Directory.GetFiles(docsFolder, "*.md", SearchOption.AllDirectories);
+        // Markdown is the native format; PDFs are converted to text via PdfPig.
+        var mdFiles = Directory.EnumerateFiles(docsFolder, "*.*", SearchOption.AllDirectories)
+            .Where(f => f.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
+                     || f.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
         var currentRelativePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var totalUpserted = 0;
         var totalDeleted = 0;
@@ -72,8 +78,9 @@ public sealed class MarkdownIngestionService(
             if (currentRelativePaths.Contains(path)) continue;
 
             logger.LogInformation("Removing deleted file from store: {Path}", path);
-            var staleKeys = Enumerable.Range(0, oldChunkCount).Select(i => BuildKey(path, i));
+            var staleKeys = Enumerable.Range(0, oldChunkCount).Select(i => BuildKey(path, i)).ToList();
             await collection.DeleteAsync(staleKeys, ct);
+            await fullText.DeleteAsync(staleKeys, ct);
             metadata.Remove(path);
             totalDeleted += oldChunkCount;
         }
@@ -98,8 +105,13 @@ public sealed class MarkdownIngestionService(
         Dictionary<string, int> metadata,
         CancellationToken ct)
     {
-        var rawText = await File.ReadAllTextAsync(absolutePath, ct);
-        var (frontMatter, body) = ParseFrontMatter(rawText);
+        var isPdf = absolutePath.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase);
+        var rawText = isPdf
+            ? PdfTextExtractor.ExtractAsMarkdown(absolutePath)
+            : await File.ReadAllTextAsync(absolutePath, ct);
+        var (frontMatter, body) = isPdf
+            ? (new FrontMatterData(), rawText)   // PDFs have no YAML front matter
+            : ParseFrontMatter(rawText);
         var chunks = BuildChunks(body, frontMatter, relativePath);
 
         logger.LogDebug("Ingesting {File}: {N} chunk(s)", relativePath, chunks.Count);
@@ -117,13 +129,16 @@ public sealed class MarkdownIngestionService(
             chunks[i].Embedding = embeddings[i].Vector;
 
         await collection.UpsertAsync(chunks, ct);
+        await fullText.UpsertAsync(chunks.Select(c => (c.Key, c.Content)).ToList(), ct);
 
         // Delete trailing stale chunks if this ingest produced fewer chunks than last time.
         if (metadata.TryGetValue(relativePath, out var oldCount) && oldCount > chunks.Count)
         {
             var staleKeys = Enumerable.Range(chunks.Count, oldCount - chunks.Count)
-                .Select(i => BuildKey(relativePath, i));
+                .Select(i => BuildKey(relativePath, i))
+                .ToList();
             await collection.DeleteAsync(staleKeys, ct);
+            await fullText.DeleteAsync(staleKeys, ct);
             logger.LogDebug("Deleted {N} stale chunk(s) from {File}", oldCount - chunks.Count, relativePath);
         }
 
