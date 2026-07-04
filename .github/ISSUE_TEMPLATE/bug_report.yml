@@ -1,0 +1,49 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+      placeholder: Asked a question and the answer stream stopped mid-sentence…
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      options:
+        - Docker Compose (local profile)
+        - Docker Compose (codespaces profile)
+        - Docker Compose (production profile)
+        - dotnet run (no Docker)
+    validations:
+      required: true
+
+  - type: input
+    id: models
+    attributes:
+      label: Ollama models
+      description: Chat and embedding models in use, if not the defaults.
+      placeholder: qwen2.5:7b-instruct-q4_K_M / nomic-embed-text
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: >
+        App container logs (`docker compose logs app-local`) or a trace from the
+        Aspire Dashboard (http://localhost:18888). Redact anything sensitive.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: "`/health/ready` reports Healthy (or I included its output above)"
+        - label: I searched existing issues for duplicates
+          required: true

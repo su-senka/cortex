@@ -1,26 +1,29 @@
-# RagAssistant — Internal Docs Q&A (Local RAG)
+# Cortex — Internal Docs Q&A (Local RAG)
 
-A minimal, fully local RAG (Retrieval-Augmented Generation) tool that lets you ask plain-English questions about internal Markdown documentation. Runs entirely offline on CPU via a local [Ollama](https://ollama.com) instance — no cloud calls, no external vector database.
+A fully local RAG (Retrieval-Augmented Generation) assistant that lets you ask plain-English questions about internal documentation (Markdown and PDF). Runs entirely offline on CPU via a local [Ollama](https://ollama.com) instance — no cloud calls, no external vector database.
 
 ## Architecture
 
 ```
-Browser (HTML/JS)
+React SPA  (Vite + Tailwind, served from wwwroot)
       │  POST /api/chat  →  Server-Sent Events
       ▼
 ASP.NET Core Minimal API  (RagAssistant.Web)
       │
-      ├─ MarkdownIngestionService   ← parses .md, chunks, embeds, upserts
-      ├─ RagQueryService            ← embeds question, searches, streams LLM answer
+      ├─ MarkdownIngestionService   ← parses .md/.pdf, chunks, embeds, upserts
+      ├─ RagQueryService            ← hybrid retrieval (vector + BM25/RRF), streams LLM answer
+      ├─ IDocumentSource connectors ← Azure DevOps, GitHub (webhook-triggered sync)
       │
       ├─ OllamaSharp (OllamaApiClient)   as IChatClient + IEmbeddingGenerator
-      └─ Microsoft.SemanticKernel.Connectors.SqliteVec   (sqlite-vec, single .db file)
+      ├─ Microsoft.SemanticKernel.Connectors.SqliteVec   (sqlite-vec, single .db file)
+      └─ SQLite FTS5                 (BM25 keyword index, same .db file)
 ```
 
 **Key design choices:**
 - All models run locally via Ollama — zero cloud dependency.
-- Vector store is a single SQLite file using the [sqlite-vec](https://github.com/asg017/sqlite-vec) extension — no external process needed.
-- Sources are determined by vector search before the LLM call, so citations are exact and deterministic (the model cannot hallucinate references).
+- Vector store is a single SQLite file using the [sqlite-vec](https://github.com/asg017/sqlite-vec) extension — no external process needed. The BM25 keyword index (FTS5) lives in the same file.
+- Retrieval is hybrid: cosine similarity + BM25 merged with Reciprocal Rank Fusion, so exact keywords and acronyms are found even when embeddings miss them. Optional HyDE and LLM reranking are available behind config flags.
+- Sources are determined by retrieval before the LLM call, so citations are exact and deterministic (the model cannot hallucinate references).
 - Chunk keys are deterministic (`filename#index`) so re-ingesting edited files is an upsert, not a duplicate.
 
 ---
@@ -119,6 +122,7 @@ Each compose profile sets `ASPNETCORE_ENVIRONMENT` (`Development` / `Codespaces`
 
 | Key | Default | Description |
 |-----|---------|-------------|
+| `App:Name` | `Cortex` | Name shown in the header and browser tab |
 | `Ollama:BaseUrl` | `http://localhost:11434` | Ollama API URL |
 | `Ollama:ChatModel` | `qwen2.5:7b-instruct-q4_K_M` | Model for answering questions |
 | `Ollama:EmbeddingModel` | `nomic-embed-text` | Model for generating embeddings |
@@ -264,3 +268,17 @@ A small overlap (`ChunkOverlap` chars from the end of the previous chunk) is pre
 `Microsoft.SemanticKernel.Connectors.SqliteVec` and `Microsoft.Extensions.VectorData.Abstractions` are preview packages whose APIs change between releases. If you update to a newer version, check the `VectorStoreCollection<TKey, TRecord>` abstract class API — it consolidates both CRUD and vector search.
 
 The `SQLitePCLRaw.lib.e_sqlite3` dependency has a known vulnerability advisory. For a proof-of-concept running on an internal network this is acceptable; monitor for an updated package before deploying in a higher-risk environment.
+
+---
+
+## 7. Testing
+
+```bash
+dotnet test src/RagAssistant.Tests
+```
+
+The suite covers chunking/front-matter parsing, hybrid retrieval (RRF fusion, tag filters, history windowing, reranking, HyDE), the FTS5 index, conversation storage, and webhook signature validation. CI runs it on every PR.
+
+## Contributing & License
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup, conventions, and the PR process. Released under the [MIT License](LICENSE).

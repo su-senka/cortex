@@ -25,10 +25,10 @@ This document captures the current state of the application and the prioritised 
 - Health/readiness endpoints, background startup ingestion, per-user rate limiting, WAL-mode SQLite
 - Three compose profiles (`local`, `codespaces`, `production`) with per-environment `appsettings.{Env}.json`; nginx TLS proxy in production
 
-**Gaps before public release:**
-- No tests (Direction 8)
-- No OSS packaging — license, CI, published image (Direction 9)
+**Remaining gaps:**
 - Connectors for Confluence / SharePoint / Notion not yet implemented (deferred until needed)
+- No screenshot / demo GIF in the README (needs a real screen capture)
+- The published ghcr.io image link should be added to the README after the first release tag
 
 ---
 
@@ -93,31 +93,29 @@ Notes: the FTS5 index (`chunks_fts`) lives in the same SQLite file as the vector
 
 ---
 
-## Direction 8 — Testing  ⬜ Remaining
+## Direction 8 — Testing  ✅ Done
 
-Zero tests is the biggest regression risk as the codebase grows. Add in priority order:
+Shipped: `src/RagAssistant.Tests` (xUnit + NSubstitute + FluentAssertions 7 — v7 kept deliberately for its Apache-2.0 license) with 44 tests:
 
-1. **Unit tests for `MarkdownIngestionService`** — chunking logic, front-matter parsing, heading breadcrumbs. Pure functions, no deps; fast to write.
-2. **Unit tests for `RagQueryService`** — mock `IEmbeddingGenerator`, `IChatClient`, and `VectorStoreCollection`; assert RRF fusion order, tag filtering, history windowing, and source building.
-3. **Unit tests for `FullTextIndex`** — in-memory SQLite; FTS5 query sanitisation (punctuation, quotes) and upsert/delete sync.
-4. **Integration tests for `ConversationService`** — in-memory SQLite; test create/get/delete/feedback and concurrency.
-5. **HTTP integration tests** — `WebApplicationFactory<Program>` with a stubbed Ollama; test SSE streaming, 401 on unauthenticated requests, and both webhook signature validations (SHA1 + SHA256).
+- **`MarkdownIngestionService`** — front-matter parsing, heading breadcrumbs, chunk splitting with overlap, stale-chunk deletion on shrink/delete, FTS sync, subdirectory scanning
+- **`RagQueryService`** — deterministic source building, RRF fusion (BM25-only hits included, both-legs ranking, orphaned FTS rows skipped), tag filtering, history windowing, reranking (including unparseable-reply fallback), HyDE gating
+- **`FullTextIndex`** — keyword matching, query sanitisation against FTS5 syntax injection, upsert/delete semantics, top-N limits
+- **`ConversationService`** — per-user isolation, ownership checks, message ordering, cascade delete, feedback aggregation and vote replacement, concurrent writes under WAL
+- **Webhook signatures** — ADO HMAC-SHA1 and GitHub HMAC-SHA256 accept/reject/no-secret cases
 
-Stack: **xUnit** + **NSubstitute** + **FluentAssertions** in a `src/RagAssistant.Tests/` project.
+Not yet covered: full-stack HTTP integration tests (`WebApplicationFactory` + stubbed Ollama for SSE and auth flows) — worthwhile follow-up, but the OIDC challenge middleware makes the harness non-trivial.
 
 ---
 
-## Direction 9 — GitHub / OSS Readiness  ⬜ Remaining
+## Direction 9 — GitHub / OSS Readiness  ✅ Done (except screenshot)
 
-Required before publishing:
-
-- **`LICENSE`** — MIT
-- **`CONTRIBUTING.md`** — dev environment setup, coding conventions, PR process
-- **GitHub Actions CI** — `dotnet build` + `dotnet test` + `npm run build` on every PR; Docker build test on `main`
-- **Issue templates** — bug report and feature request in `.github/ISSUE_TEMPLATE/`
-- **Configurable app name** — `"Cortex"` is hardcoded in `index.html` / `Header.tsx`; make it `App:Name` in `appsettings.json`
-- **Published Docker image** — push to GitHub Container Registry (`ghcr.io`) on release tags so others can `docker compose up` without building locally
-- **Social preview** — a screenshot or short demo GIF in the README
+- ✅ **`LICENSE`** — MIT
+- ✅ **`CONTRIBUTING.md`** — dev environment setup, coding conventions, connector guide, PR process
+- ✅ **GitHub Actions CI** (`.github/workflows/ci.yml`) — `dotnet build` + `dotnet test` + `npm run build` on every PR; Docker build check on `master` pushes
+- ✅ **Issue templates** — bug report and feature request forms in `.github/ISSUE_TEMPLATE/`
+- ✅ **Configurable app name** — `App:Name` in `appsettings.json` (`APP_NAME` in `.env`); drives the header and browser tab
+- ✅ **Published Docker image** (`.github/workflows/release.yml`) — pushes `ghcr.io/<owner>/<repo>` on `v*` tags with semver + `latest` tags
+- ⬜ **Social preview** — take a screenshot / demo GIF once the app is running and add it to the README (can't be generated from code)
 
 ---
 
@@ -133,5 +131,5 @@ Required before publishing:
 | 6 | Reliability | ✅ Done |
 | 7 | RAG quality | ✅ Done (reranker/HyDE off by default — enable after measuring on real usage) |
 | 8 | Document connectors | ◐ ADO + GitHub + PDF done; Confluence/SharePoint/Notion as needed |
-| 9 | Testing | ⬜ **Next** — before accepting outside contributions |
-| 10 | OSS readiness | ⬜ Last — polish and publish once tests are in |
+| 9 | Testing | ✅ Done — 44 tests; HTTP integration harness is a possible follow-up |
+| 10 | OSS readiness | ✅ Done — ready to publish; add a README screenshot and tag `v1.0.0` to push the image |

@@ -13,6 +13,11 @@ export default function App() {
 
   useEffect(() => watchSystemTheme(() => useAppStore.getState().theme), []);
 
+  // Tab title follows the configurable App:Name once known.
+  useEffect(() => {
+    if (user?.appName) document.title = user.appName;
+  }, [user?.appName]);
+
   return (
     <div className="flex flex-col h-dvh bg-gray-100 text-gray-900 dark:bg-gray-950 dark:text-gray-100">
       <Header user={user} />

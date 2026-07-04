@@ -40,7 +40,7 @@ export function Header({ user }: Props) {
       >
         ☰
       </button>
-      <h1 className="text-[1.0625rem] font-semibold">Cortex</h1>
+      <h1 className="text-[1.0625rem] font-semibold">{user?.appName || 'Cortex'}</h1>
       <div className="flex-1" />
       {user && <span className="text-sm opacity-85 whitespace-nowrap max-sm:hidden">{user.name}</span>}
       <button

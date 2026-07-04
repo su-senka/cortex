@@ -38,6 +38,8 @@ var ollamaCfg  = builder.Configuration.GetSection("Ollama");
 var ragCfg     = builder.Configuration.GetSection("Rag");
 var oidcCfg    = builder.Configuration.GetSection("Oidc");
 
+var appName = builder.Configuration["App:Name"] ?? "Cortex";
+
 var requireHttpsMetadata = oidcCfg.GetValue("RequireHttpsMetadata", true);
 var validateIssuer       = oidcCfg.GetValue("ValidateIssuer", true);
 var validateAudience     = oidcCfg.GetValue("ValidateAudience", true);
@@ -314,7 +316,7 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 
 // ── Auth endpoints ────────────────────────────────────────────────────────────
 
-// GET /api/me — current user's identity (called by the frontend on load).
+// GET /api/me — current user's identity plus app branding (called by the frontend on load).
 app.MapGet("/api/me", (HttpContext ctx) =>
 {
     var name    = ctx.User.FindFirstValue("preferred_username")
@@ -322,7 +324,7 @@ app.MapGet("/api/me", (HttpContext ctx) =>
                  ?? "Unknown";
     var sub     = ctx.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "";
     var isAdmin = ctx.User.IsInRole(adminRole);
-    return Results.Ok(new { name, sub, isAdmin });
+    return Results.Ok(new { name, sub, isAdmin, appName });
 }).RequireAuthorization();
 
 // GET /auth/logout — sign out of both the local cookie and Keycloak.

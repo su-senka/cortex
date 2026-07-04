@@ -2,6 +2,7 @@ export interface User {
   name: string;
   sub: string;
   isAdmin: boolean;
+  appName: string; // configurable via App:Name in appsettings.json
 }
 
 export interface Conversation {

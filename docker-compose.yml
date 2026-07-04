@@ -39,6 +39,7 @@ x-app-base: &app-base
   restart: unless-stopped
 
 x-app-env: &app-env
+  App__Name: ${APP_NAME:-Cortex}
   Ollama__BaseUrl: http://ollama:11434
   Rag__VectorDbPath: /data/rag_store.db
   Rag__DocsFolder: /docs

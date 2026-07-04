@@ -6,6 +6,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RagAssistant.Core", "src\Ra
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RagAssistant.Web", "src\RagAssistant.Web\RagAssistant.Web.csproj", "{FA5BB94A-99AF-40BD-9B00-F644F8B95357}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RagAssistant.Tests", "src\RagAssistant.Tests\RagAssistant.Tests.csproj", "{3B527491-D693-487E-A097-3E6A04678984}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -40,6 +42,18 @@ Global
 		{FA5BB94A-99AF-40BD-9B00-F644F8B95357}.Release|x64.Build.0 = Release|Any CPU
 		{FA5BB94A-99AF-40BD-9B00-F644F8B95357}.Release|x86.ActiveCfg = Release|Any CPU
 		{FA5BB94A-99AF-40BD-9B00-F644F8B95357}.Release|x86.Build.0 = Release|Any CPU
+		{3B527491-D693-487E-A097-3E6A04678984}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3B527491-D693-487E-A097-3E6A04678984}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3B527491-D693-487E-A097-3E6A04678984}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{3B527491-D693-487E-A097-3E6A04678984}.Debug|x64.Build.0 = Debug|Any CPU
+		{3B527491-D693-487E-A097-3E6A04678984}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{3B527491-D693-487E-A097-3E6A04678984}.Debug|x86.Build.0 = Debug|Any CPU
+		{3B527491-D693-487E-A097-3E6A04678984}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3B527491-D693-487E-A097-3E6A04678984}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3B527491-D693-487E-A097-3E6A04678984}.Release|x64.ActiveCfg = Release|Any CPU
+		{3B527491-D693-487E-A097-3E6A04678984}.Release|x64.Build.0 = Release|Any CPU
+		{3B527491-D693-487E-A097-3E6A04678984}.Release|x86.ActiveCfg = Release|Any CPU
+		{3B527491-D693-487E-A097-3E6A04678984}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -47,5 +61,6 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{55C5D9EE-636B-4B3F-8124-E26774493FA4} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{FA5BB94A-99AF-40BD-9B00-F644F8B95357} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{3B527491-D693-487E-A097-3E6A04678984} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal
