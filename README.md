@@ -1,5 +1,10 @@
 # Cortex — Internal Docs Q&A (Local RAG)
 
+[![CI](https://github.com/su-senka/cortex/actions/workflows/ci.yml/badge.svg)](https://github.com/su-senka/cortex/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
+[![React 19](https://img.shields.io/badge/React-19-61DAFB)](https://react.dev/)
+
 A fully local RAG (Retrieval-Augmented Generation) assistant that lets you ask plain-English questions about internal documentation (Markdown and PDF). Runs entirely offline on CPU via a local [Ollama](https://ollama.com) instance — no cloud calls, no external vector database.
 
 ## Architecture
@@ -65,7 +70,7 @@ docker compose --profile production up -d --build   # behind the nginx TLS proxy
 
 Open **http://localhost:8080** (local profile). Keycloak admin is at http://localhost:8180, and the Aspire Dashboard (traces/logs/metrics) at http://localhost:18888.
 
-For backend-only development you can still run bare-metal (`dotnet run --project src/RagAssistant.Web`), but Ollama and Keycloak must be reachable — easiest is to start the compose stack and stop just the app container.
+For backend-only development you can still run bare-metal (`dotnet run --project src/RagAssistant.Web`), but Ollama and Keycloak must be reachable — easiest is to start the compose stack and stop just the app container. The SPA is not checked in; build it once first (`cd src/RagAssistant.Web/ClientApp && npm install && npm run build`), or use `npm run dev` for hot reload.
 
 On startup, the app indexes the docs folder in the background — it serves traffic immediately, and `GET /api/ingest/status` (or `/health/ready`) reports ingestion progress. Ask something like:
 - "How do I connect to the VPN from macOS?"

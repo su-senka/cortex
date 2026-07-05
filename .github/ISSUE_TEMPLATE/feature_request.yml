@@ -24,5 +24,5 @@ body:
     attributes:
       label: Checks
       options:
-        - label: I checked ROADMAP.md — this isn't already planned or explicitly deferred
+        - label: I searched existing issues and PRs for similar requests
           required: true

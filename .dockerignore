@@ -1,22 +1,27 @@
+.git/
 src/**/bin/
 src/**/obj/
 src/RagAssistant.Web/ClientApp/node_modules/
-src/RagAssistant.Web/wwwroot/assets/
+*.tsbuildinfo
 
-# Windows publish artifacts
-publish/
-publish-win-x64/
+# The SPA is built in the Dockerfile's node stage — never copy a local build in.
+src/RagAssistant.Web/wwwroot/
+
+# Tests are not part of the runtime image
+src/RagAssistant.Tests/
 
 # Runtime data goes in Docker volumes, not baked into the image
 src/RagAssistant.Web/rag_store.db
 src/RagAssistant.Web/rag_metadata.json
+src/RagAssistant.Web/dp-keys/
 
-# Docs and samples are mounted as a volume at runtime
+# Docs are mounted as a volume at runtime
 docs/
-sample-docs/
 
 # IDE + OS
+.idea/
 .vs/
 .vscode/
+.claude/
 **/.DS_Store
 *.user
